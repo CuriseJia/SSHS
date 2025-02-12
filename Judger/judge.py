@@ -29,11 +29,11 @@ if __name__ == '__main__':
     expect_success = [0, 0, 0]
     expect_success_v = [0, 0, 0]
     fake_location = {}
-    if task in [2, 3]:
+    if task in [2, 4]:
         for anno in config:
             fake_location[anno['audio'][2:]] = anno['fake_location']
     
-    if task in [1, 3, 4, 6]:
+    if task in [1, 3, 2, 6]:
 
         for wav_name, predict_point in tqdm(result.items()):
             if type(predict_point) != tuple and type(predict_point) != list or len(predict_point) != 2:
@@ -56,7 +56,7 @@ if __name__ == '__main__':
                     success_v[area_id] += 1
                 expect_success_v[area_id] += (area_mask_all > 0.5).sum() / (1024 * 1280)
                 
-            elif task == 3:
+            elif task == 2:
                 gt_y, gt_x = fake_location[wav_name][0], fake_location[wav_name][1]
                 if math.sqrt((center_x - gt_x) ** 2 + (center_y - gt_y) ** 2) < 200:
                     success_a[area_id] += 1
@@ -64,7 +64,7 @@ if __name__ == '__main__':
                     
             total[area_id] += 1
             
-    elif task == 2:   
+    elif task == 4:   
             
         for wav_name, predict_point in tqdm(result.items()):
             if type(predict_point) != tuple and type(predict_point) != list or len(predict_point) != 2:
@@ -97,14 +97,14 @@ if __name__ == '__main__':
                 
             total[0] += 1
     
-    for i in range(3 if task in [1, 3, 4, 6] else 1):
+    for i in range(3 if task in [1, 2, 3, 6] else 1):
         print(f'Area {i} success rate: {success[i]}/{total[i]} = {success[i] / total[i] * 100:.4f}%, expect success rate: {expect_success[i] / total[i] * 100 if task != 2 else math.pi * 200 * 200 / 1024 / 1280 * 100 :.4f}%')
         
     if task == 6:
         for i in range(3):
             print(f'Area {i} V-success rate: {success_v[i]}/{total[i]} = {success_v[i] / total[i] * 100:.4f}%, expect V-success rate: {expect_success_v[i] / total[i] * 100:.4f}%')
 
-    if task == 3:
+    if task == 2:
         for i in range(3):
             print(f'Area {i} A-success rate: {success_a[i]}/{total[i]} = {success_a[i] / total[i] * 100:.4f}%, expect A-success rate: {math.pi * 200 * 200 / 1024 / 1280 * 100 :.4f}%')
     
