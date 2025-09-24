@@ -1,0 +1,9 @@
+[submodule "comparison/IS3"]
+	path = comparison/IS3
+	url = https://github.com/kaistmm/SSLalignment.git
+[submodule "comparison/CAVP"]
+	path = comparison/CAVP
+	url = https://github.com/cyh-0/CAVP.git
+[submodule "pycochleagram"]
+	path = pycochleagram
+	url = https://github.com/mcdermottLab/pycochleagram.git
