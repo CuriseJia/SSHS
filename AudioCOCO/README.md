@@ -1,7 +1,9 @@
-# 🎉 音频转耳蜗电图预处理流程
+# Conver Stereo to Cochleagram Pipeline.
 
-### 1. 立体声音频处理 ✅
-**问题**: `operands could not be broadcast together with shapes (81,2) (81,)`
+## Some Common Bugs
+
+### 1. Stereo Audio Processing ✅
+**Question**: `operands could not be broadcast together with shapes (81,2) (81,)`
 **解决方案**: 自动立体声转单声道处理
 ```python
 if len(signal.shape) > 1 and signal.shape[1] > 1:
@@ -19,18 +21,6 @@ if len(signal.shape) > 1 and signal.shape[1] > 1:
 nyquist_freq = sr // 2
 adjusted_hi_lim = min(self.hi_lim, nyquist_freq)
 ```
-
-### 4. 文件保存问题 ✅
-**问题**: 输出目录创建失败
-**解决方案**: 改进路径处理逻辑
-
-## 🎯 成功验证
-
-### 测试结果
-- ✅ 立体声音频自动转换
-- ✅ 耳蜗电图生成成功
-- ✅ 多种格式保存支持
-- ✅ 批量处理功能
 
 ### 输出示例
 ```

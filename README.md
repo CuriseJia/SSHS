@@ -20,12 +20,22 @@ In this paper, we build the first framework to benchmark current Audio-Visual mo
 ## 🚀 Quick Start
 ### Setup
 
+#### Setup dataset generation environment
+```shell
+Unity 6000.10f1
+MATLAB 2022b
+```
+
 #### Setup code environment
 ```shell
 conda create -n SSHS python=3.9
 conda activate SSHS
 pip install -r requirements.txt
 ```
+
+### Dataset Generation
+
+Open the [UnityProject](https://github.com/CuriseJia/SSHS/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/UnityProject/Assets/SoundGenFinal.cs) 
 
 
 ## 🎗️ Acknowledgments

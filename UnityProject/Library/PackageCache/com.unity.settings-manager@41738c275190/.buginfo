@@ -1,0 +1,5 @@
+system: jira
+server: jira.unity3d.com
+project: SETMB
+issuetype: Bug
+package: Settings Manager

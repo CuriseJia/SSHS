@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-数据预处理配置文件 - 修复版本
+数据预处理配置文件
 定义常用的耳蜗电图生成参数配置
 """
 
@@ -17,7 +17,8 @@ DEFAULT_CONFIG = {
     'sample_factor': 2,       # 采样因子
     'downsample_factor': None,  # 下采样因子 - 不使用下采样
     'nonlinearity': 'power',  # 非线性变换
-    'strict': False           # 严格模式
+    'strict': False,          # 严格模式
+    'target_duration': 10.0   # 目标时长 (秒) - 用于标准化时间维度
 }
 
 # 语音处理配置
@@ -29,7 +30,8 @@ SPEECH_CONFIG = {
     'sample_factor': 2,       # 采样因子
     'downsample_factor': 160, # 适度下采样 (16000/160=100)
     'nonlinearity': 'power',  # 幂压缩
-    'strict': False
+    'strict': False,
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 音乐处理配置 - 修复版本
@@ -41,7 +43,8 @@ MUSIC_CONFIG = {
     'sample_factor': 4,       # 高采样因子
     'downsample_factor': 220, # 较少下采样 (22050/220=100.23)
     'nonlinearity': 'db',     # 分贝变换
-    'strict': False
+    'strict': False,
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 高质量配置
@@ -53,7 +56,8 @@ HIGH_QUALITY_CONFIG = {
     'sample_factor': 4,       # 高采样因子
     'downsample_factor': None, # 不下采样
     'nonlinearity': 'power',  # 幂压缩
-    'strict': True            # 严格模式
+    'strict': True,           # 严格模式
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 64-band配置 (实际输出约133个通道)
@@ -65,7 +69,8 @@ COCHLEAGRAM_64BAND_CONFIG = {
     'sample_factor': 2,       # 采样因子
     'downsample_factor': None, # 不使用下采样
     'nonlinearity': 'power',  # 非线性变换
-    'strict': False           # 非严格模式
+    'strict': False,          # 非严格模式
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 真正的64通道配置
@@ -77,7 +82,8 @@ COCHLEAGRAM_64CHANNEL_CONFIG = {
     'sample_factor': 2,       # 采样因子 (32*2=64)
     'downsample_factor': None, # 不使用下采样
     'nonlinearity': 'power',  # 非线性变换
-    'strict': False           # 非严格模式
+    'strict': False,          # 非严格模式
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 高分辨率64通道配置
@@ -89,7 +95,8 @@ COCHLEAGRAM_64CHANNEL_HIGH_RES_CONFIG = {
     'sample_factor': 1,       # 采样因子 (64*1=64)
     'downsample_factor': None, # 不使用下采样
     'nonlinearity': 'power',  # 非线性变换
-    'strict': False           # 非严格模式
+    'strict': False,          # 非严格模式
+    'target_duration': 10.0   # 目标时长 (秒)
 }
 
 # 快速处理配置

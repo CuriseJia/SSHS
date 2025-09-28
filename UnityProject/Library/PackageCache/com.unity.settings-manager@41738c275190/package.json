@@ -1,0 +1,28 @@
+{
+  "name": "com.unity.settings-manager",
+  "displayName": "Settings Manager",
+  "version": "2.1.0",
+  "unity": "2022.3",
+  "description": "A framework for making any serializable field a setting, complete with a pre-built settings interface.",
+  "samples": [
+    {
+      "displayName": "User Settings Example",
+      "description": "Example code showing use of the Settings Manager attributes.",
+      "path": "Samples~"
+    }
+  ],
+  "hideInEditor": true,
+  "_upm": {
+    "changelog": "### Changes\n\n- Enable Auto Reference on main assembly.\n\n### Bug Fixes\n\n- [case: PBLD-56] Added tooltip to \"Options\" gear icon to specify that context menu items are relevant only to the selected category."
+  },
+  "upmCi": {
+    "footprint": "ce1b795144f0590981795c9a1a8394ed4e206a94"
+  },
+  "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.settings-manager@2.1/manual/index.html",
+  "repository": {
+    "url": "https://github.com/Unity-Technologies/com.unity.settings-manager.git",
+    "type": "git",
+    "revision": "6eb5ed85eaf3276cc09f0cc4fc3311c72f0fc196"
+  },
+  "_fingerprint": "41738c27519039c335849eb78949382f4d7a3544"
+}

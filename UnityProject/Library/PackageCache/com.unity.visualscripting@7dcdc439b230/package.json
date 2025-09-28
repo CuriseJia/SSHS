@@ -1,0 +1,27 @@
+{
+  "name": "com.unity.visualscripting",
+  "displayName": "Visual Scripting",
+  "version": "1.9.6",
+  "unity": "2021.3",
+  "description": "Visual scripting is a workflow that uses visual, node-based graphs to design behaviors rather than write lines of C# script.\n\nEnabling artists, designers and programmers alike, visual scripting can be used to design final logic, quickly create prototypes, iterate on gameplay and create custom nodes to help streamline collaboration.\n\nVisual scripting is compatible with third-party APIs, including most packages, assets and custom libraries.",
+  "type": "tool",
+  "dependencies": {
+    "com.unity.ugui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0"
+  },
+  "relatedPackages": {
+    "com.unity.visualscripting.tests": "1.9.6"
+  },
+  "_upm": {
+    "changelog": "### Fixed\n- Fixed the output path for Property Providers generated from User Editor code. [UVSB-2550](https://issuetracker.unity3d.com/product/unity/issues/guid/UVSB-2550)\n- Fixed a minor spelling issue in the Project Settings section [UVSB-2523](https://issuetracker.unity3d.com/product/unity/issues/guid/UVSB-2523)\n- Fixed an unexpected MissingComponentException thrown when using GetOrAddComponent [UVSB-2575](https://jira.unity3d.com/browse/UVSB-2575)\n- Fixed scenes not reopening after a Build when more than one Scene was opened and Visual Scripting with variables is used. [UVSB-2561](https://jira.unity3d.com/browse/UVSB-2561)\n- Fixed values of LocalizedAudioClip type being shown as None after selecting another game object and returning back [UVSB-2528](https://jira.unity3d.com/browse/UVSB-2528)\n- Fixed a compilation issue that happened when a project had another version of NCalc already installed. [UVSB-2583](https://jira.unity3d.com/browse/UVSB-2583)\n- Fixed an 'AudioMixerController' is inaccessible due to its protection level' error thrown when generating the AotStubs. [UVSB-2577](https://jira.unity3d.com/browse/UVSB-2577)\n- Fixed compilation error when AotStubs references Unity.NetworkManager.__rpc_func_table and Unity.NetworkManager.__rpc_name_table fields [UVSB-2563](https://issuetracker.unity3d.com/product/unity/issues/guid/UVSB-2563)\n\n### Changed\n- Improved the warning message when a library fails to load while scanning for Editor assemblies."
+  },
+  "upmCi": {
+    "footprint": "9e482dde239f2d9fdf499a223ff09903f8f945fa"
+  },
+  "repository": {
+    "url": "https://github.cds.internal.unity3d.com/unity/com.unity.visualscripting.git",
+    "type": "git",
+    "revision": "d24c56a75889cb6fe0046a9472368815d56d6bc7"
+  },
+  "_fingerprint": "7dcdc439b230145cec4202cd6ebad135736e0c14"
+}
