@@ -1,0 +1,5 @@
+*.md eol=lf
+*.cs eol=lf
+*.json eol=lf
+*.meta eol=lf
+*.scene eol=lf

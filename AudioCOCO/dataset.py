@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 from .data_preprocess import CochleagramPreprocessor
+import soundfile as sf
 
 
 class AudioCocoProcessor:
@@ -97,7 +98,7 @@ class AudioCocoDataset(Dataset):
 
     每个样本返回:
     - image: FloatTensor [3, H, W] (默认224)
-    - audio_coch: FloatTensor [1, F, T]
+    - audio_coch: FloatTensor [2, F, T] (立体声；若单声道则复制)
     - gt: Dict 包含
         - bbox_xyxy_224: Tensor[int] [4]
         - gt_map_224: FloatTensor [224, 224]
@@ -139,10 +140,35 @@ class AudioCocoDataset(Dataset):
         return img_t, (orig_h, orig_w)
 
     def _load_audio_coch(self, path: str) -> Tensor:
-        coch = self.processor(path)  # np.ndarray [F, T]
-        # 转为 torch [1, F, T]
-        coch_t = torch.from_numpy(coch).float().unsqueeze(0)
-        return coch_t
+        # 使用 soundfile 读取以保留声道, 并确保所有音频长度均为10秒
+        samples, sr = sf.read(path)
+        target_length = sr * 5  # 10秒的目标长度
+        if len(samples) < target_length:
+            # 填充零
+            samples = np.pad(samples, (0, target_length - len(samples)), mode='constant', constant_values=0)
+        elif len(samples) > target_length:
+            # 截断
+            samples = samples[:target_length]
+        # 若多声道，提取左右；若单声道，复制为双通道
+        if samples.ndim == 2 and samples.shape[1] >= 2:
+            left = samples[:, 0]
+            right = samples[:, 1]
+        else:
+            mono = samples if samples.ndim == 1 else samples[:, 0]
+            left = mono
+            right = mono
+        
+        # 确保左右声道长度一致
+        min_len = min(len(left), len(right))
+        left = left[:min_len]
+        right = right[:min_len]
+        # print(f'left shape: {left.shape}, right shape: {right.shape}')
+        # 分别生成左右 cochleagram
+        coch_L = self.processor(left, sr=sr)  # [F, T]
+        coch_R = self.processor(right, sr=sr)  # [F, T]
+        # print(f'coch_L shape: {coch_L.shape}, coch_R shape: {coch_R.shape}')
+        coch = np.stack([coch_L, coch_R], axis=0)  # [2, F, T]
+        return torch.from_numpy(coch).float()
 
     def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, Dict[str, Any]]:
         entry = self.entries[idx]

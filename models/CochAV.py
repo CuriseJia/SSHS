@@ -1,148 +1,117 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from typing import Any, Dict, Optional
+import numpy as np
 
-try:
-    # 期望与 AVENet 相同的依赖来源
-    from comparison.IS3.models_lvs import base_models
-except Exception:
-    base_models = None
-
-from SSHS.AudioCOCO.dataset import AudioCocoProcessor
-
-
-class StereoToMono1DCNN(nn.Module):
-    """将立体声 [B,2,L] 提取空间差异并映射到单通道波形 [B,L]。
-
-    设计目标:
-    - 保持时序长度 L 不变 (padding='same' 等效)
-    - 多尺度卷积融合左右声道信息
-    - 末端输出1通道, 通过 Tanh 限幅到 [-1,1]
-    """
-
-    def __init__(self, in_channels: int = 2, hidden: int = 64):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv1d(in_channels, hidden, kernel_size=9, padding=4),
-            nn.BatchNorm1d(hidden),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(hidden, hidden, kernel_size=5, padding=2),
-            nn.BatchNorm1d(hidden),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(hidden, hidden, kernel_size=3, padding=1),
-            nn.BatchNorm1d(hidden),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(hidden, 1, kernel_size=1, padding=0),
-            nn.Tanh(),
-        )
-
-    def forward(self, stereo_wav: torch.Tensor) -> torch.Tensor:
-        """stereo_wav: [B,2,L] -> mono_wav: [B,L]"""
-        mono = self.net(stereo_wav)  # [B,1,L]
-        return mono.squeeze(1)
+# 复用与 AVENet 相同的基础模型定义
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'comparison', 'IS3'))
+from models_lvs import base_models
 
 
 class CochAV(nn.Module):
-    """基于 AVENet 的结构, 将音频端替换为: Stereo-1D-CNN -> Processor(cochleagram) -> Audio-ResNet。
+    """CochAV: 基于 AVENet 结构的双通道 cochleagram 输入模型。
 
-    输入:
-    - image: [B,3,H,W] (如 224x224)
-    - stereo_wav: [B,2,L] (原始立体声波形, 采样率 sample_rate)
-
-    输出与 AVENet 一致:
-    - A, logits, Pos, Neg
+    - 图像分支: 与 AVENet 相同 (ResNet18)
+    - 音频分支: ResNet18, 首层 conv 接收 2 通道输入(左右耳蜗图), 捕获空间音频线索
+    - 前向输出: (A, logits, Pos, Neg) 与 AVENet 对齐
+    - 支持从 IS3 预训练权重初始化
     """
 
-    def __init__(
-        self,
-        coch_config: Optional[Dict[str, Any]] = None,
-        sample_rate: int = 16000,
-        epsilon: float = 0.65,
-        epsilon2: float = 0.4,
-        tri_map: bool = True,
-        use_neg: bool = True,
-        tau: float = 0.03,
-        vision_pretrained: bool = True,
-    ) -> None:
-        super().__init__()
+    def __init__(self, args, pretrained_path=None):
+        super(CochAV, self).__init__()
 
-        # 图像/音频编码器与 AVENet 对齐
-        if base_models is None:
-            raise ImportError("无法导入 models_lvs.base_models，请确保运行路径与 AVENet 一致并可导入 'models_lvs'")
+        # Image encoder: 与 AVENet 保持一致
+        self.imgnet = base_models.resnet18(modal='vision', pretrained=True)
 
-        self.imgnet = base_models.resnet18(modal='vision', pretrained=vision_pretrained)
+        # Audio encoder: 基于 AVENet 的 audio resnet18, 但首层支持2通道
         self.audnet = base_models.resnet18(modal='audio')
+        # 将第一层从 1 通道(或期望的单通道)扩展到 2 通道
+        # 注意：audio模态使用 conv1_a 而不是 conv1
+        if hasattr(self.audnet, 'conv1_a'):
+            old_conv = self.audnet.conv1_a
+            new_conv = nn.Conv2d(
+                in_channels=2,
+                out_channels=old_conv.out_channels,
+                kernel_size=old_conv.kernel_size,
+                stride=old_conv.stride,
+                padding=old_conv.padding,
+                bias=(old_conv.bias is not None),
+            )
+            # 权重初始化: 复制/均值初始化, 让第2通道与第1通道权重一致以稳定迁移
+            with torch.no_grad():
+                if old_conv.weight.shape[1] == 1:
+                    new_conv.weight.data[:, 0:1] = old_conv.weight.data.clone()
+                    new_conv.weight.data[:, 1:2] = old_conv.weight.data.clone()
+                else:
+                    # 若原本不是1通道, 做通道均值
+                    mean_weight = old_conv.weight.data.mean(dim=1, keepdim=True)
+                    new_conv.weight.data = mean_weight.repeat(1, 2, 1, 1)
+                if old_conv.bias is not None:
+                    new_conv.bias.data[:] = old_conv.bias.data
+            self.audnet.conv1_a = new_conv
+
+        self.m = nn.Sigmoid()
         self.avgpool = nn.AdaptiveMaxPool2d((1, 1))
-        self.sigmoid = nn.Sigmoid()
 
-        # 立体声 -> 单声道波形
-        self.s2m = StereoToMono1DCNN(in_channels=2, hidden=64)
+        self.epsilon = args.epsilon
+        self.epsilon2 = args.epsilon2
+        self.tau = 0.03
+        self.trimap = args.tri_map
+        self.Neg = args.Neg
 
-        # cochleagram 处理器 (numpy域), 前向中将做 CPU 往返, 用于推理/评估
-        self.sample_rate = sample_rate
-        self.processor = AudioCocoProcessor(**(coch_config or {}))
-
-        # AVENet 对比学习参数
-        self.epsilon = epsilon
-        self.epsilon2 = epsilon2
-        self.tau = tau
-        self.trimap = tri_map
-        self.Neg = use_neg
-
-        # 初始化与 AVENet 对齐
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.normal_(m.weight, mean=1, std=0.02)
                 nn.init.constant_(m.bias, 0)
+        
+        # 加载预训练权重
+        if pretrained_path and os.path.exists(pretrained_path):
+            self._load_pretrained_weights(pretrained_path)
 
-    def forward(self, image: torch.Tensor, stereo_wav: torch.Tensor) -> tuple:
-        """
-        image: [B,3,H,W]
-        stereo_wav: [B,2,L]
-        返回: A, logits, Pos, Neg (与 AVENet 一致)
-        """
-        device = image.device
-        batch_size = image.shape[0]
+    def forward(self, image: torch.Tensor, audio_coch_stereo: torch.Tensor, args, mode: str = 'val'):
+        """前向传播。
 
-        # 图像编码
+        Args:
+            image: [B, 3, H, W]
+            audio_coch_stereo: [B, 2, F, T] 左右耳蜗图双通道
+        Returns:
+            (A, logits, Pos, Neg) 与 AVENet 一致
+        """
+        B = image.shape[0]
+        mask = (1 - 100 * torch.eye(B, B, device=image.device))
+
+        # Image encoder
         img = self.imgnet(image)
         img = F.normalize(img, dim=1)
 
-        # 立体声 -> 单通道波形 (torch域)
-        mono_wav = self.s2m(stereo_wav)  # [B,L]
+        # Audio encoder (stereo cochleagram)
+        aud = self.audnet(audio_coch_stereo)
+        aud = self.avgpool(aud).view(B, -1)
+        aud = F.normalize(aud, dim=1)
 
-        # 调用 numpy 域 processor 生成 cochleagram (逐样本处理)
-        coch_list = []
-        for b in range(batch_size):
-            wav_np = mono_wav[b].detach().cpu().float().numpy()
-            coch_np = self.processor(wav_np, sr=self.sample_rate)  # [F,T] numpy
-            coch_t = torch.from_numpy(coch_np).unsqueeze(0).unsqueeze(0).float()  # [1,1,F,T]
-            coch_list.append(coch_t)
-        audio_coch = torch.cat(coch_list, dim=0).to(device)  # [B,1,F,T]
+        # Join: 与 AVENet 完全一致
+        A = torch.einsum('ncqa,nchw->nqa', [img, aud.unsqueeze(2).unsqueeze(3)]).unsqueeze(1)
+        A0 = torch.einsum('ncqa,ckhw->nkqa', [img, aud.T.unsqueeze(2).unsqueeze(3)])
 
-        # 音频编码 (复用 AVENet)
-        aud_feat = self.audnet(audio_coch)
-        aud_vec = self.avgpool(aud_feat).view(batch_size, -1)
-        aud_vec = F.normalize(aud_vec, dim=1)
-
-        # 融合 (与 AVENet 相同)
-        A = torch.einsum('ncqa,nchw->nqa', [img, aud_vec.unsqueeze(2).unsqueeze(3)]).unsqueeze(1)
-        A0 = torch.einsum('ncqa,ckhw->nkqa', [img, aud_vec.T.unsqueeze(2).unsqueeze(3)])
-
-        Pos = self.sigmoid((A - self.epsilon) / self.tau)
+        # Trimap
+        Pos = self.m((A - self.epsilon) / self.tau)
         if self.trimap:
-            Pos2 = self.sigmoid((A - self.epsilon2) / self.tau)
+            Pos2 = self.m((A - self.epsilon2) / self.tau)
             Neg = 1 - Pos2
         else:
             Neg = 1 - Pos
 
-        Pos_all = self.sigmoid((A0 - self.epsilon) / self.tau)
+        Pos_all = self.m((A0 - self.epsilon) / self.tau)
 
+        # Positive similarity
         sim1 = (Pos * A).view(*A.shape[:2], -1).sum(-1) / (Pos.view(*Pos.shape[:2], -1).sum(-1))
-        mask = (1 - 100 * torch.eye(batch_size, batch_size, device=device))
+        # Across negatives
         sim = ((Pos_all * A0).view(*A0.shape[:2], -1).sum(-1) / Pos_all.view(*Pos_all.shape[:2], -1).sum(-1)) * mask
         sim2 = (Neg * A).view(*A.shape[:2], -1).sum(-1) / Neg.view(*Neg.shape[:2], -1).sum(-1)
 
@@ -152,10 +121,58 @@ class CochAV(nn.Module):
             logits = torch.cat((sim1, sim), 1) / 0.07
 
         return A, logits, Pos, Neg
+    
+    def _load_pretrained_weights(self, pretrained_path: str):
+        """从IS3预训练权重加载模型参数
+        
+        Args:
+            pretrained_path: 预训练权重文件路径 (.tar 或 .pth 文件)
+        """
+        print(f"正在加载预训练权重: {pretrained_path}")
+        
+        try:
+            # 加载检查点
+            checkpoint = torch.load(pretrained_path, map_location='cpu')
+            
+            # 获取预训练权重字典
+            if 'model_state_dict' in checkpoint:
+                pretrained_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                pretrained_dict = checkpoint['state_dict']
+            else:
+                pretrained_dict = checkpoint
+            
+            # 获取当前模型状态字典
+            model_dict = self.state_dict()
+            
+            # 过滤掉不匹配的层
+            filtered_dict = {}
+            for k, v in pretrained_dict.items():
+                # 移除 'module.' 前缀（如果存在）
+                key = k.replace('module.', '') if k.startswith('module.') else k
+                
+                # 只加载匹配的层
+                if key in model_dict and model_dict[key].shape == v.shape:
+                    filtered_dict[key] = v
+                else:
+                    print(f"跳过不匹配的层: {key} (形状: {v.shape if hasattr(v, 'shape') else 'N/A'})")
+            
+            # 更新模型字典
+            model_dict.update(filtered_dict)
+            
+            # 加载权重
+            self.load_state_dict(model_dict, strict=False)
+            
+            # print(f"成功加载 {len(filtered_dict)} 个预训练层")
+            
+            # # 打印加载的层信息
+            # print("加载的预训练层:")
+            # for key in filtered_dict.keys():
+            #     print(f"  - {key}")
+                
+        except Exception as e:
+            print(f"加载预训练权重失败: {e}")
+            print("将使用随机初始化的权重")
 
-
-__all__ = [
-    'CochAV',
-]
 
 

@@ -35,6 +35,7 @@ class CochleagramPreprocessor:
                  nonlinearity: Optional[str] = 'power',
                  strict: bool = False,
                  max_duration: float = 10.0,
+                 target_duration: Optional[float] = None,
                  ihc_lowpass_cutoff: float = 3000.0,
                  ihc_lowpass_order: int = 7):
         """
@@ -50,6 +51,7 @@ class CochleagramPreprocessor:
             nonlinearity: 非线性变换类型 ('db', 'power', None)
             strict: 是否使用严格模式
             max_duration: 最大音频时长 (秒)
+            target_duration: 目标音频时长 (秒)，用于标准化耳蜗电图时间维度
             ihc_lowpass_cutoff: IHC低通滤波器截止频率 (Hz，默认3000Hz)
             ihc_lowpass_order: IHC低通滤波器阶数 (默认7阶)
         """
@@ -62,12 +64,16 @@ class CochleagramPreprocessor:
         self.nonlinearity = nonlinearity
         self.strict = strict
         self.max_duration = max_duration
+        self.target_duration = target_duration
         self.ihc_lowpass_cutoff = ihc_lowpass_cutoff
         self.ihc_lowpass_order = ihc_lowpass_order
         
         # 设置日志
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
+        
+        # 调试信息
+        self.logger.info(f"初始化CochleagramPreprocessor: target_duration={self.target_duration}")
         
     def load_audio(self, audio_path: str) -> Tuple[np.ndarray, int]:
         """
@@ -79,7 +85,6 @@ class CochleagramPreprocessor:
         Returns:
             (signal, sr): 音频信号和采样率
         """
-        self.logger.info(f"加载音频文件: {audio_path}")
         
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
@@ -112,6 +117,22 @@ class CochleagramPreprocessor:
         else:
             self.logger.info(f"音频时长: {len(signal) / sr:.2f}秒 (未超过限制 {self.max_duration}秒)")
         
+        # 如果指定了目标时长，进行标准化处理
+        if self.target_duration is not None:
+            target_samples = int(self.target_duration * sr)
+            self.logger.info(f"目标时长: {self.target_duration}秒, 目标样本数: {target_samples}")
+            if len(signal) < target_samples:
+                # 填充零
+                padding = target_samples - len(signal)
+                signal = np.pad(signal, (0, padding), mode='constant', constant_values=0)
+                self.logger.info(f"填充音频从 {len(signal) - padding} 样本到 {target_samples} 样本")
+            elif len(signal) > target_samples:
+                # 截断
+                signal = signal[:target_samples]
+                self.logger.info(f"截断音频从 {len(signal)} 样本到 {target_samples} 样本")
+            else:
+                self.logger.info(f"音频长度已匹配目标长度: {len(signal)} 样本")
+        
         return signal, sr
     
     def generate_cochleagram(self, signal: np.ndarray, sr: int) -> np.ndarray:
@@ -125,7 +146,7 @@ class CochleagramPreprocessor:
         Returns:
             cochleagram: 耳蜗电图数组
         """
-        self.logger.info("生成耳蜗电图...")
+        # 移除耳蜗电图生成开始日志
         
         # 动态调整高频限制，避免超过奈奎斯特频率
         nyquist_freq = sr // 2
@@ -134,7 +155,7 @@ class CochleagramPreprocessor:
             self.logger.info(f"调整高频限制从 {self.hi_lim}Hz 到 {adjusted_hi_lim}Hz (奈奎斯特频率: {nyquist_freq}Hz)")
         
         # 记录IHC低通滤波器参数用于phase locking控制
-        self.logger.info(f"IHC低通滤波器参数: 截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
+        # self.logger.info(f"IHC低通滤波器参数: 截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
         
         # 智能调整下采样因子，确保整数倍关系
         adjusted_downsample = self.downsample_factor
@@ -170,9 +191,6 @@ class CochleagramPreprocessor:
         
         # 翻转图像坐标系（pycochleagram输出是倒置的）
         coch = np.flipud(coch)
-        
-        self.logger.info(f"耳蜗电图生成完成，形状: {coch.shape}")
-        print(f"耳蜗电图形状: {coch.shape}")
         
         # 应用基于BEZ2018模型的phase locking控制
         coch = self._apply_bez2018_phase_locking(coch, sr)
@@ -221,7 +239,7 @@ class CochleagramPreprocessor:
         Returns:
             处理后的耳蜗电图
         """
-        self.logger.info(f"应用BEZ2018 phase locking控制: IHC低通滤波器截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
+        # self.logger.info(f"应用BEZ2018 phase locking控制: IHC低通滤波器截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
         
         # 计算每个滤波器对应的中心频率
         n_filters = cochleagram.shape[0]

@@ -1,0 +1,46 @@
+# CochAV训练配置文件
+# 使用: python train.py --config train_config.yaml
+
+# 数据配置
+data:
+  train_config: "AudioCOCO/config1.json"
+  val_config: "AudioCOCO/config1.json"
+  image_root: "/home/yanhao/AudioCOCO/images/single_object/"  # 请修改为实际路径
+  audio_root: "/home/yanhao/AudioCOCO/rendering/config1/config1_"   # 请修改为实际路径
+  coch_config: "default"  # 可选: default, speech, music, high_quality
+  img_size: 224
+
+# 训练配置
+training:
+  epochs: 50
+  batch_size: 64
+  lr: 1e-4
+  weight_decay: 1e-4
+  accumulation_steps: 2
+  max_grad_norm: 1.0
+
+# 优化策略
+optimization:
+  use_amp: true  # 混合精度训练
+  scheduler: "cosine"  # 可选: cosine, step, plateau, none
+  
+# 系统配置
+system:
+  num_workers: 8
+  seed: 42
+  distributed: false
+
+# 日志和保存
+logging:
+  checkpoint_dir: "./checkpoints"
+  experiment_name: "cochav_audiococo"
+  use_wandb: false  # 需要安装wandb
+  log_interval: 50
+  save_interval: 10
+
+# CochAV模型参数
+model:
+  epsilon: 0.65
+  epsilon2: 0.4
+  tri_map: true
+  Neg: true

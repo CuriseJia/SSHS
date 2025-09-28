@@ -1,0 +1,43 @@
+{
+  "name": "com.unity.collab-proxy",
+  "displayName": "Unity Version Control",
+  "version": "2.9.3",
+  "unity": "2021.3",
+  "unityRelease": "0f1",
+  "description": "The package gives you the ability to use Unity Version Control in the Unity editor. To use Unity Version Control, a subscription is required. Learn more about how you can get started for free by visiting https://unity.com/solutions/version-control",
+  "dependencies": {},
+  "keywords": [
+    "backup",
+    "cloud",
+    "collab",
+    "collaborate",
+    "collaboration",
+    "control",
+    "devops",
+    "plastic",
+    "plasticscm",
+    "source",
+    "team",
+    "teams",
+    "version",
+    "vcs",
+    "uvcs"
+  ],
+  "category": "Editor",
+  "relatedPackages": {
+    "com.unity.collab-proxy.tests": "2.9.3"
+  },
+  "_upm": {
+    "changelog": "### Fixed\n\n- Fixed the error that was thrown when the \"Configure Unity Version Control\" button is pressed in the Build Automation settings in Build Profiles"
+  },
+  "upmCi": {
+    "footprint": "2a322ca149614f108fa74d51894895ec9dd479f2"
+  },
+  "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.collab-proxy@2.9/manual/index.html",
+  "repository": {
+    "url": "https://github.cds.internal.unity3d.com/unity/com.unity.cloud.collaborate.git",
+    "type": "git",
+    "revision": "d05e170be4282c71223767f286e93871356512a1"
+  },
+  "_fingerprint": "ab839cc7d2adf143e5378baf46edc31cbc5d84f7"
+}
