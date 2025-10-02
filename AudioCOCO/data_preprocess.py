@@ -37,7 +37,10 @@ class CochleagramPreprocessor:
                  max_duration: float = 10.0,
                  target_duration: Optional[float] = None,
                  ihc_lowpass_cutoff: float = 3000.0,
-                 ihc_lowpass_order: int = 7):
+                 ihc_lowpass_order: int = 7,
+                 align_window_2_to_5: bool = False,
+                 post_rectify: bool = True,
+                 power_point_three: bool = True):
         """
         初始化预处理器
         
@@ -67,13 +70,14 @@ class CochleagramPreprocessor:
         self.target_duration = target_duration
         self.ihc_lowpass_cutoff = ihc_lowpass_cutoff
         self.ihc_lowpass_order = ihc_lowpass_order
+        self.align_window_2_to_5 = align_window_2_to_5
+        self.post_rectify = post_rectify
+        self.power_point_three = power_point_three
         
         # 设置日志
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
         
-        # 调试信息
-        self.logger.info(f"初始化CochleagramPreprocessor: target_duration={self.target_duration}")
         
     def load_audio(self, audio_path: str) -> Tuple[np.ndarray, int]:
         """
@@ -92,12 +96,9 @@ class CochleagramPreprocessor:
         # 使用pycochleagram的utils加载音频
         signal, sr = utils.wav_to_array(audio_path)
         
-        # 处理立体声音频 - 转换为单声道
+        # 保留多声道；后续在生成耳蜗图时分别处理左右声道
         if len(signal.shape) > 1 and signal.shape[1] > 1:
-            self.logger.info(f"检测到立体声音频，转换为单声道 (形状: {signal.shape})")
-            # 取平均值转换为单声道
-            signal = np.mean(signal, axis=1)
-            self.logger.info(f"转换后形状: {signal.shape}")
+            self.logger.info(f"检测到立体声音频，将分别处理左右声道 (形状: {signal.shape})")
         
         # 如果需要重采样
         if sr != self.sr:
@@ -109,29 +110,50 @@ class CochleagramPreprocessor:
                 signal = signal[::factor]
                 sr = self.sr
         
-        # 截断音频到指定时长
+        # 截断音频到指定时长（支持单/多声道）
         max_samples = int(self.max_duration * sr)
-        if len(signal) > max_samples:
-            self.logger.info(f"截断音频从 {len(signal)} 样本到 {max_samples} 样本 (时长: {self.max_duration}秒)")
-            signal = signal[:max_samples]
+        num_samples = signal.shape[0]
+        if num_samples > max_samples:
+            self.logger.info(f"截断音频从 {num_samples} 样本到 {max_samples} 样本 (时长: {self.max_duration}秒)")
+            signal = signal[:max_samples, ...] if signal.ndim > 1 else signal[:max_samples]
         else:
-            self.logger.info(f"音频时长: {len(signal) / sr:.2f}秒 (未超过限制 {self.max_duration}秒)")
-        
-        # 如果指定了目标时长，进行标准化处理
-        if self.target_duration is not None:
-            target_samples = int(self.target_duration * sr)
-            self.logger.info(f"目标时长: {self.target_duration}秒, 目标样本数: {target_samples}")
-            if len(signal) < target_samples:
-                # 填充零
-                padding = target_samples - len(signal)
-                signal = np.pad(signal, (0, padding), mode='constant', constant_values=0)
-                self.logger.info(f"填充音频从 {len(signal) - padding} 样本到 {target_samples} 样本")
-            elif len(signal) > target_samples:
-                # 截断
-                signal = signal[:target_samples]
-                self.logger.info(f"截断音频从 {len(signal)} 样本到 {target_samples} 样本")
-            else:
-                self.logger.info(f"音频长度已匹配目标长度: {len(signal)} 样本")
+            self.logger.info(f"音频时长: {num_samples / sr:.2f}秒 (未超过限制 {self.max_duration}秒)")
+
+        # 若需要对齐到固定2-5秒三秒窗口
+        if self.align_window_2_to_5:
+            need_total = int(5.0 * sr)
+            cur_len = signal.shape[0]
+            if cur_len < need_total:
+                pad = need_total - cur_len
+                if signal.ndim == 1:
+                    signal = np.pad(signal, (0, pad), mode='constant', constant_values=0)
+                else:
+                    signal = np.pad(signal, ((0, pad), (0, 0)), mode='constant', constant_values=0)
+                self.logger.info(f"为2-5秒窗口填充到5秒: pad={pad} 样本")
+            start = int(2.0 * sr)
+            end = int(5.0 * sr)
+            signal = signal[start:end, ...] if signal.ndim > 1 else signal[start:end]
+            self.logger.info(f"已裁剪到固定窗口 [2s, 5s): {signal.shape[0]} 样本")
+        else:
+            # 如果指定了目标时长，进行标准化处理
+            if self.target_duration is not None:
+                target_samples = int(self.target_duration * sr)
+                self.logger.info(f"目标时长: {self.target_duration}秒, 目标样本数: {target_samples}")
+                cur_len = signal.shape[0]
+                if cur_len < target_samples:
+                    # 填充零（支持多声道）
+                    padding = target_samples - cur_len
+                    if signal.ndim == 1:
+                        signal = np.pad(signal, (0, padding), mode='constant', constant_values=0)
+                    else:
+                        signal = np.pad(signal, ((0, padding), (0, 0)), mode='constant', constant_values=0)
+                    self.logger.info(f"填充音频从 {cur_len} 样本到 {target_samples} 样本")
+                elif cur_len > target_samples:
+                    # 截断（支持多声道）
+                    signal = signal[:target_samples, ...] if signal.ndim > 1 else signal[:target_samples]
+                    self.logger.info(f"截断音频从 {cur_len} 样本到 {target_samples} 样本")
+                else:
+                    self.logger.info(f"音频长度已匹配目标长度: {signal.shape[0]} 样本")
         
         return signal, sr
     
@@ -176,26 +198,72 @@ class CochleagramPreprocessor:
                     self.logger.info(f"调整下采样因子从 {adjusted_downsample} 到 {target_env_sr} (audio_sr: {audio_sr}, 下采样因子: {downsample_factor})")
                     adjusted_downsample = target_env_sr
         
-        # 生成耳蜗电图
-        coch = cgram.human_cochleagram(
-            signal, 
-            sr, 
-            n=self.n_filters,
-            low_lim=self.low_lim,
-            hi_lim=adjusted_hi_lim,
-            sample_factor=self.sample_factor,
-            downsample=adjusted_downsample,
-            nonlinearity=self.nonlinearity,
-            strict=self.strict
-        )
-        
-        # 翻转图像坐标系（pycochleagram输出是倒置的）
-        coch = np.flipud(coch)
-        
-        # 应用基于BEZ2018模型的phase locking控制
-        coch = self._apply_bez2018_phase_locking(coch, sr)
-        
-        return coch
+        # 生成耳蜗电图（支持单/双声道）。若为立体声，分别处理左右声道并在最后一维堆叠为2通道。
+        if signal.ndim == 2 and signal.shape[1] >= 2:
+            left = signal[:, 0]
+            right = signal[:, 1]
+
+            coch_L = cgram.human_cochleagram(
+                left,
+                sr,
+                n=self.n_filters,
+                low_lim=self.low_lim,
+                hi_lim=adjusted_hi_lim,
+                sample_factor=self.sample_factor,
+                downsample=adjusted_downsample,
+                nonlinearity=self.nonlinearity,
+                strict=self.strict
+            )
+            coch_R = cgram.human_cochleagram(
+                right,
+                sr,
+                n=self.n_filters,
+                low_lim=self.low_lim,
+                hi_lim=adjusted_hi_lim,
+                sample_factor=self.sample_factor,
+                downsample=adjusted_downsample,
+                nonlinearity=self.nonlinearity,
+                strict=self.strict
+            )
+
+            coch_L = np.flipud(coch_L)
+            coch_R = np.flipud(coch_R)
+
+            coch_L = self._apply_bez2018_phase_locking(coch_L, sr)
+            coch_R = self._apply_bez2018_phase_locking(coch_R, sr)
+
+            if self.post_rectify:
+                coch_L = np.maximum(coch_L, 0.0)
+                coch_R = np.maximum(coch_R, 0.0)
+            if self.power_point_three:
+                coch_L = np.power(coch_L, 0.3)
+                coch_R = np.power(coch_R, 0.3)
+
+            # 最后一维为声道数: [F, T, 2]
+            coch = np.stack([coch_L, coch_R], axis=-1)
+            return coch
+        else:
+            coch = cgram.human_cochleagram(
+                signal,
+                sr,
+                n=self.n_filters,
+                low_lim=self.low_lim,
+                hi_lim=adjusted_hi_lim,
+                sample_factor=self.sample_factor,
+                downsample=adjusted_downsample,
+                nonlinearity=self.nonlinearity,
+                strict=self.strict
+            )
+
+            coch = np.flipud(coch)
+            coch = self._apply_bez2018_phase_locking(coch, sr)
+
+            if self.post_rectify:
+                coch = np.maximum(coch, 0.0)
+            if self.power_point_three:
+                coch = np.power(coch, 0.3)
+
+            return coch
     
     def save_cochleagram(self, cochleagram: np.ndarray, output_path: str, 
                         save_format: str = 'npy') -> None:
@@ -292,16 +360,43 @@ class CochleagramPreprocessor:
         return magnitude_response
     
     def _save_as_image(self, cochleagram: np.ndarray, output_path: str) -> None:
-        """保存为图像文件"""
-        plt.figure(figsize=(10, 6))
-        utils.cochshow(cochleagram, interact=False)
-        plt.title('Cochleagram')
-        plt.ylabel('Filter #')
-        plt.xlabel('Time')
-        plt.gca().invert_yaxis()
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        plt.close()
+        """保存为图像文件（支持单/双声道）。"""
+        if cochleagram.ndim == 2:
+            plt.figure(figsize=(10, 6))
+            utils.cochshow(cochleagram, interact=False)
+            plt.title('Cochleagram')
+            plt.ylabel('Filter #')
+            plt.xlabel('Time')
+            plt.gca().invert_yaxis()
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
+        elif cochleagram.ndim == 3 and cochleagram.shape[-1] == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+            utils.cochshow(cochleagram[..., 0], ax=axes[0], interact=False)
+            axes[0].set_title('Cochleagram - Left')
+            axes[0].set_ylabel('Filter #')
+            axes[0].set_xlabel('Time')
+            axes[0].invert_yaxis()
+            utils.cochshow(cochleagram[..., 1], ax=axes[1], interact=False)
+            axes[1].set_title('Cochleagram - Right')
+            axes[1].set_xlabel('Time')
+            axes[1].invert_yaxis()
+            fig.tight_layout()
+            fig.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+        else:
+            # 回退到展示第一个通道，避免异常
+            plt.figure(figsize=(10, 6))
+            to_show = cochleagram[..., 0] if cochleagram.ndim == 3 else cochleagram
+            utils.cochshow(to_show, interact=False)
+            plt.title('Cochleagram (first channel)')
+            plt.ylabel('Filter #')
+            plt.xlabel('Time')
+            plt.gca().invert_yaxis()
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close()
     
     def process_single_file(self, input_path: str, output_path: str, 
                            save_format: str = 'npy') -> Dict[str, Any]:

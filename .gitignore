@@ -23,6 +23,8 @@
 *.log
 
 # project files
+*.npy
+*.json
 .idea/
 .vscode/
 *__pycache__*
@@ -43,3 +45,5 @@ __pycache__/
 # other files
 pretrained/
 dataset/
+checkpoint/
+AudioCOCO/coch/

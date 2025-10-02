@@ -26,7 +26,7 @@ class CochAV(nn.Module):
         self.imgnet = base_models.resnet18(modal='vision', pretrained=True)
 
         # Audio encoder: 基于 AVENet 的 audio resnet18, 但首层支持2通道
-        self.audnet = base_models.resnet18(modal='audio')
+        self.audnet = base_models.resnet18(modal='audio', pretrained=True)
         # 将第一层从 1 通道(或期望的单通道)扩展到 2 通道
         # 注意：audio模态使用 conv1_a 而不是 conv1
         if hasattr(self.audnet, 'conv1_a'):
@@ -61,6 +61,21 @@ class CochAV(nn.Module):
         self.trimap = args.tri_map
         self.Neg = args.Neg
 
+        # 改进的检测头：多尺度特征提取 + 更好的梯度流
+        self.det_head = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((4, 4)),  # 保留更多空间信息
+            nn.Flatten(),
+            nn.Linear(64 * 16, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(128, 4),
+        )
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -69,6 +84,11 @@ class CochAV(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.normal_(m.weight, mean=1, std=0.02)
                 nn.init.constant_(m.bias, 0)
+        
+        # 检测头权重初始化：在模块初始化之后重新设置，避免被覆盖
+        with torch.no_grad():
+            self.det_head[-1].weight.data.normal_(0, 0.01)  # 小随机权重
+            self.det_head[-1].bias.data = torch.tensor([0.5, 0.5, 0.3, 0.3])  # [cx, cy, w, h]
         
         # 加载预训练权重
         if pretrained_path and os.path.exists(pretrained_path):
@@ -120,7 +140,9 @@ class CochAV(nn.Module):
         else:
             logits = torch.cat((sim1, sim), 1) / 0.07
 
-        return A, logits, Pos, Neg
+        # 预测归一化bbox
+        pred_norm = torch.sigmoid(self.det_head(A))  # [B, 4] in (0,1)
+        return A, logits, Pos, Neg, pred_norm
     
     def _load_pretrained_weights(self, pretrained_path: str):
         """从IS3预训练权重加载模型参数
