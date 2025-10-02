@@ -35,7 +35,27 @@ pip install -r requirements.txt
 
 ### Dataset Generation
 
-Open the [UnityProject](https://github.com/CuriseJia/SSHS/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/UnityProject/Assets/SoundGenFinal.cs) 
+Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console.
+
+### Training
+The training dataset contains about 1,800,000 pairs, and you can use Unity to generate and train. 
+```shell
+python train.py
+```
+
+### Test
+The test dataset and the checkpoint can be downloaded here. 
+```shell
+python test.py
+```
+
+<div align=center>
+
+|Datasets|Checkpoint|
+|:--------:|:--------------:|
+| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) |
+
+</div>
 
 
 ## 🎗️ Acknowledgments
