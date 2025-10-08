@@ -11,9 +11,11 @@ import torch
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='CochAV heatmap 命中率评测')
-    parser.add_argument('--config', type=str, default='AudioCOCO/config1.json', help='配置JSON')
+    parser.add_argument('--config', type=str, default='AudioCOCO/config6.json', help='配置JSON')
+    parser.add_argument('--condition', type=str, default='normal', help='无声条件')
+    parser.add_argument('--label', type=str, default='no', help='标签')
     parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='图像根目录')
-    parser.add_argument('--coch_root', type=str, default='/home/yanhao/SSHS/AudioCOCO/coch/', help='coch .npy 根目录')
+    parser.add_argument('--coch_root', type=str, default='/data/data0/coch/', help='coch .npy 根目录')
     parser.add_argument('--img_size', type=int, default=224, help='图像尺寸')
     parser.add_argument('--batch_size', type=int, default=32, help='评测批大小')
     parser.add_argument('--num_workers', type=int, default=4, help='dataloader 线程数')
@@ -51,7 +53,6 @@ def main() -> None:
             self.Neg = ns.neg
             self.img_size = ns.img_size
             self.pretrained_path = ns.pretrained_path
-            # 其余字段训练中可能用不到，这里占位
             self.gpu_ids = [int(x) for x in ns.gpu.split(',') if x.strip() != ''] or [0]
 
     eval_args = EvalArgs(args)
@@ -68,7 +69,6 @@ def main() -> None:
         train=False,
     )
 
-    # 为了与评测逻辑更直接，手动逐样本迭代
     loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
 
     # Model
@@ -88,10 +88,18 @@ def main() -> None:
         for image_t, audio_coch_t, gt, _, _ in tqdm(loader, total=len(dataset), desc='Evaluating'):
             image_t = image_t.to(device, non_blocking=True)
             audio_coch_t = audio_coch_t.to(device, non_blocking=True)
+            if args.config.endswith('config4.json'):
+                if args.label == 'noise':
+                    image_t = torch.randn_like(image_t)
+                else:
+                    image_t = torch.zeros_like(image_t)
+            if args.condition == 'silent':
+                if args.label == 'noise':
+                    audio_coch_t = torch.randn_like(audio_coch_t)
+                else:
+                    audio_coch_t = torch.zeros_like(audio_coch_t)
 
-            # 前向，拿到 A (特征图)
             A, _, _, _, _ = model(image_t, audio_coch_t, eval_args, mode='val')
-            # A 形状 [B=1, 1, H, W] 或 [B, 1, H, W]，取去batch与通道
             heatmap = A[0, 0]  # [H, W]
 
             # 最大值坐标
@@ -105,12 +113,12 @@ def main() -> None:
             xmin, ymin, xmax, ymax = [int(v.item()) for v in bbox_xyxy]
 
             # heatmap 尺度 -> 224 尺度坐标对齐
-            # 模型的 A 分辨率应与图像特征网格一致；若与 224 不同，则按比例映射
-            target_size = args.img_size
-            scale_x = target_size / float(w)
-            scale_y = target_size / float(h)
-            peak_x_224 = int(round(max_x * scale_x))
-            peak_y_224 = int(round(max_y * scale_y))
+            # ResNet18 输出 14x14 特征图，需要映射到 224x224 图像
+            target_size = args.img_size  # 224
+            scale_x = target_size / float(w)  # 224/14 = 16
+            scale_y = target_size / float(h)  # 224/14 = 16
+            peak_x_224 = int(round((max_x + 0.5) * scale_x))
+            peak_y_224 = int(round((max_y + 0.5) * scale_y))
 
             # 命中判断：峰值是否落入 gt_box
             hit = (xmin <= peak_x_224 <= xmax) and (ymin <= peak_y_224 <= ymax)
@@ -122,7 +130,6 @@ def main() -> None:
                 meta = gt['meta']
                 obj_size = None
                 if isinstance(meta, dict):
-                    # 可能是原始entry字典，或“字典的各字段已列表化”的字典
                     if 'object_size' in meta:
                         val = meta['object_size']
                         if isinstance(val, (list, tuple)):
