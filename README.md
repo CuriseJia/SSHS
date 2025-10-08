@@ -20,7 +20,7 @@ In this paper, we build the first framework to benchmark current Audio-Visual mo
 ## 🚀 Quick Start
 ### Setup
 
-#### Setup dataset generation environment
+#### Setup dataset environment
 ```shell
 Unity 6000.10f1
 MATLAB 2022b
@@ -31,6 +31,9 @@ MATLAB 2022b
 conda create -n SSHS python=3.9
 conda activate SSHS
 pip install -r requirements.txt
+git submodule init
+git submodule update
+git submodule update --init --recursive
 ```
 
 ### Dataset Generation
@@ -40,26 +43,26 @@ Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject
 ### Training
 The training dataset contains about 1,800,000 pairs, and you can use Unity to generate and train. 
 ```shell
-python train.py
+python train.py 
 ```
 
 ### Test
 The test dataset and the checkpoint can be downloaded here. 
 ```shell
-python test.py
+python test.py --pretrained_path path_to_the_checkpoint_file
 ```
 
 <div align=center>
 
 |Datasets|Checkpoint|
 |:--------:|:--------------:|
-| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) |
+| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/u/1/folders/1kCKV9_ZCoAOs_K9dVYtuJL_CYaQMP-6x) |
 
 </div>
 
 
 ## 🎗️ Acknowledgments
-Our code is based on [IS3](https://github.com/kaistmm/SSLalignment) and [Pycochleagram](https://github.com/mcdermottLab/pycochleagram). We sincerely appreciate for their contributions.
+Our code is based on [IS3](https://github.com/kaistmm/SSLalignment), [DepthAnything](https://github.com/LiheYoung/Depth-Anything) and [Pycochleagram](https://github.com/mcdermottLab/pycochleagram). We sincerely appreciate for their contributions.
 
 
 ## 📌 Citation

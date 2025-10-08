@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-CochAV 训练脚本 - AudioCOCO数据集
-包含性能优化策略：混合精度、梯度累积、学习率调度、数据并行等
+CochAV training script - Based on AudioCOCO dataset
 """
 
 import os
@@ -43,7 +42,6 @@ from AudioCOCO.cochleargram_config import get_config
 
 
 class CochAVTrainer:
-    """CochAV训练器，包含完整的训练流程和优化策略"""
     
     def __init__(self, args):
         self.args = args
@@ -359,12 +357,6 @@ class CochAVTrainer:
         self.sample_weights = torch.tensor(self.sample_weights, dtype=torch.float)
         # 确保所有权重都是正数且合理范围
         self.sample_weights = torch.clamp(self.sample_weights, min=0.1, max=10.0)
-        
-        # 调试输出：显示权重统计信息
-        # print(f"样本权重统计: min={self.sample_weights.min().item():.3f}, "
-        #       f"max={self.sample_weights.max().item():.3f}, "
-        #       f"mean={self.sample_weights.mean().item():.3f}")
-        # print(f"面积统计: min={min_area:.1f}, max={max_area:.1f}, mean={np.mean(areas):.1f}")
         
         self.sampler = torch.utils.data.WeightedRandomSampler(
             weights=self.sample_weights,

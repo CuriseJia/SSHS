@@ -25,6 +25,7 @@
 # project files
 *.npy
 *.json
+AudioCOCO/config1.json
 .idea/
 .vscode/
 *__pycache__*
@@ -47,3 +48,4 @@ pretrained/
 dataset/
 checkpoint/
 AudioCOCO/coch/
+bias_analysis_results/
