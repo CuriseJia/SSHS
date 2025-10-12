@@ -15,11 +15,11 @@ import soundfile as sf
 
 
 class AudioCocoProcessor:
-    """将单/双通道音频波形或wav路径转换为 cochleagram 的处理器。
+    """Processor to convert single/dual-channel audio waveforms or wav paths to cochleagram.
 
-    - 若输入为路径: 自动加载；若为立体声，最后一维为2通道
-    - 若输入为数组: 支持单通道或多通道，需提供采样率
-    - 返回: np.ndarray, 单声道形状为 [F, T]；立体声为 [F, T, 2]
+    - If input is path: auto-load; if stereo, last dimension is 2 channels
+    - If input is array: supports single or multi-channel, requires sampling rate
+    - Returns: np.ndarray, mono shape [F, T]; stereo [F, T, 2]
     """
 
     def __init__(self, **coch_config: Any) -> None:
@@ -30,9 +30,9 @@ class AudioCocoProcessor:
             signal, file_sr = self.preprocessor.load_audio(audio)
             return self.preprocessor.generate_cochleagram(signal, file_sr)
         else:
-            assert sr is not None, "当传入numpy波形时必须提供采样率sr"
+            assert sr is not None, "Must provide sampling rate sr when passing numpy waveform"
             signal = audio
-            # 若为多通道且包含左右声道，交由预处理器分别转换
+            # If multi-channel and contains left/right channels, hand over to preprocessor for separate conversion
             if signal.ndim > 1 and signal.shape[1] >= 2:
                 return self.preprocessor.generate_cochleagram(signal, sr)
             # 否则按单通道处理

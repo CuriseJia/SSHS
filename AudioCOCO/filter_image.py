@@ -7,13 +7,13 @@ from collections import defaultdict, Counter
 from scipy.ndimage import gaussian_filter
 
 def load_json(file_path):
-    """加载JSON文件"""
+    """Load JSON file"""
     with open(file_path, 'r') as f:
         return json.load(f)
 
 def filter_by_category_limit(instances, max_count=150):
-    """限制每个类别每个尺寸最多保留max_count个实例，并移除指定类别"""
-    # 一次性过滤掉所有不需要的类别
+    """Limit each category and size to at most max_count instances, and remove specified categories"""
+    # Filter out all unwanted categories at once
     excluded_categories = ['sheep', 'clock', 'ball', 'mouse clicking', 'zebra']
     filtered_instances = [
         instance for instance in instances 
@@ -22,21 +22,21 @@ def filter_by_category_limit(instances, max_count=150):
     
     print(f"Removed {len(instances) - len(filtered_instances)} instances from excluded categories")
     
-    # 按类别和object_size分组
+    # Group by category and object_size
     category_size_instances = defaultdict(lambda: defaultdict(list))
     for instance in filtered_instances:
-        # 使用已有的object_size字段
-        object_size = instance.get('object_size', 'size1')  # 如果没有object_size字段，默认为size1
+        # Use existing object_size field
+        object_size = instance.get('object_size', 'size1')  # If no object_size field, default to size1
         category_size_instances[instance['category']][object_size].append(instance)
     
-    # 对每个类别的每个尺寸限制数量
+    # Limit quantity for each category and size
     result_instances = []
     for category, size_dict in category_size_instances.items():
         print(f"Category: {category}")
         for size, instances_list in size_dict.items():
             print(f"  - Size: {size}, Original count: {len(instances_list)}")
             if len(instances_list) > max_count:
-                # 随机选择max_count个实例
+                # Randomly select max_count instances
                 selected = random.sample(instances_list, max_count)
                 result_instances.extend(selected)
                 print(f"    - Limited to {max_count} instances")
@@ -46,52 +46,52 @@ def filter_by_category_limit(instances, max_count=150):
     return result_instances
 
 def analyze_spatial_distribution(instances, grid_size=10):
-    """为实例生成虚拟空间分布并分析均匀性"""
-    # 为每个实例分配随机位置
+    """Generate virtual spatial distribution for instances and analyze uniformity"""
+    # Assign random positions to each instance
     for instance in instances:
         if 'x' not in instance or 'y' not in instance:
             instance['x'] = random.random()
             instance['y'] = random.random()
     
-    # 按类别分组
+    # Group by category
     category_instances = defaultdict(list)
     for instance in instances:
         category_instances[instance['category']].append(instance)
     
-    # 对每个类别分析空间分布
+    # Analyze spatial distribution for each category
     filtered_results = []
     for category, instances_list in category_instances.items():
-        # 计算中心区域和外围区域的实例
+        # Calculate instances in the center and periphery regions
         center_instances = []
         periphery_instances = []
         
         for instance in instances_list:
             x, y = instance['x'], instance['y']
-            # 定义中心区域（中间40%的区域）
+            # Define center region (40% of the middle region)
             if 0.3 <= x <= 0.7 and 0.3 <= y <= 0.7:
                 center_instances.append(instance)
             else:
                 periphery_instances.append(instance)
         
-        # 计算中心区域占比
+        # Calculate the ratio of center region
         total_count = len(instances_list)
         center_count = len(center_instances)
         center_ratio = center_count / total_count if total_count > 0 else 0
         
         print(f"Category: {category}, Center ratio: {center_ratio:.2f}")
         
-        # 如果中心区域占比过高（超过50%），则随机移除一部分中心实例
+        # If the center region ratio is too high (more than 50%), remove some center instances randomly
         if center_ratio > 0.5:
-            # 计算期望的中心区域实例数量
-            target_center_count = int(total_count * 0.4)  # 希望中心区域占40%
+            # Calculate the expected number of center region instances
+            target_center_count = int(total_count * 0.4)  # Expected center region占40%
             excess_count = center_count - target_center_count
             
             if excess_count > 0:
-                # 随机选择要保留的中心实例
+                # Randomly select the center instances to keep
                 center_instances = random.sample(center_instances, center_count - excess_count)
                 print(f"  - Removed {excess_count} instances from center region")
         
-        # 合并结果
+        # Merge results
         filtered_results.extend(periphery_instances)
         filtered_results.extend(center_instances)
     
@@ -99,29 +99,29 @@ def analyze_spatial_distribution(instances, grid_size=10):
 
 def plot_spatial_distribution(instances, object_size, output_path, size_filter=None):
     """
-    绘制空间分布热力图
+    Plot spatial distribution heatmap
     
-    参数:
-    instances - 实例列表
-    object_size - 对象尺寸描述(Single/Multiple)
-    output_path - 输出文件路径
-    size_filter - 如果指定，则只绘制该尺寸的实例
+    Args:
+    instances - Instance list
+    object_size - Object size description(Single/Multiple)
+    output_path - Output file path
+    size_filter - If specified, only plot instances with this size
     """
-    # 如果指定了尺寸过滤器，则只保留该尺寸的实例
+    # If size filter is specified, only keep instances with this size
     if size_filter:
         instances = [instance for instance in instances if instance.get('object_size') == size_filter]
         print(f"Filtered to {len(instances)} instances with size '{size_filter}'")
     
-    # 按类别分组
+    # Group by category
     category_instances = defaultdict(list)
     for instance in instances:
         category_instances[instance['category']].append(instance)
     
-    # 确定子图布局
+    # Determine subplot layout
     categories = sorted(category_instances.keys())
     n_categories = len(categories)
     
-    # 如果没有数据，显示一个空图并返回
+    # If no data, display an empty plot and return
     if n_categories == 0:
         plt.figure(figsize=(8, 6), facecolor='white')
         plt.text(0.5, 0.5, f"No data for {object_size} - {size_filter}", 
@@ -135,90 +135,90 @@ def plot_spatial_distribution(instances, object_size, output_path, size_filter=N
     n_cols = min(4, n_categories)
     n_rows = (n_categories + n_cols - 1) // n_cols
     
-    # 创建具有白色背景的图形
+    # Create a plot with white background
     plt.figure(figsize=(n_cols * 4, n_rows * 3.5), facecolor='white')
     
-    # 设置全局标题，字号增大
+    # Set global title, font size increased
     title = f"Spatial Distribution for All Categories - Object {object_size}"
     if size_filter:
         title += f" - {size_filter}"
     plt.suptitle(title, fontsize=23, y=0.98, fontweight='bold')
     
-    # 创建自定义颜色映射 - 改为红色系
+    # Create custom color mapping - changed to red
     cmap = plt.cm.Reds
     
     for i, category in enumerate(categories):
         instances_list = category_instances[category]
         ax = plt.subplot(n_rows, n_cols, i + 1)
         
-        # 提取坐标
+        # Extract coordinates
         x_coords = [instance['x'] for instance in instances_list]
         y_coords = [instance['y'] for instance in instances_list]
         
-        # 使用热力图样式（无平滑处理）
+        # Use heatmap style (no smoothing)
         if len(x_coords) > 0:
-            # 使用 2D 直方图，不应用平滑
+            # Use 2D histogram, no smoothing
             heatmap, xedges, yedges = np.histogram2d(x_coords, y_coords, 
                                                    bins=20, range=[[0, 1], [0, 1]])
             extent = [0, 1, 0, 1]
             
-            # 直接绘制热图，无平滑处理
+            # Directly plot heatmap, no smoothing
             im = ax.imshow(heatmap.T, extent=extent, origin='lower', 
                          cmap=cmap, aspect='auto', interpolation='nearest')
         else:
             ax.text(0.5, 0.5, "No Data", ha='center', va='center', fontsize=14)
         
-        # 设置子图标题和样式，字号增大
+        # Set subplot title and style, font size increased
         ax.set_title(category, fontsize=22, fontweight='bold')
         ax.set_xlabel('X Coordinate', fontsize=20)
         ax.set_ylabel('Y Coordinate', fontsize=20)
-        # 设置子图刻度,字号增大
+        # Set subplot ticks, font size increased
         ax.tick_params(axis='both', labelsize=18)
         ax.grid(True, linestyle='--', alpha=0.3)
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
     
-    # 添加共享颜色条，字号增大
-    cax = plt.axes([0.92, 0.15, 0.02, 0.7])  # 右侧颜色条位置
+    # Add shared color bar, font size increased
+    cax = plt.axes([0.92, 0.15, 0.02, 0.7])  # Right color bar position
     cbar = plt.colorbar(im, cax=cax)
     cbar.set_label('Object Count', fontsize=22)
-    cbar.ax.tick_params(labelsize=18)  # 增大颜色条刻度字号
+    cbar.ax.tick_params(labelsize=18)  # Increase color bar tick font size
     
-    plt.tight_layout(rect=[0, 0, 0.92, 0.95])  # 为颜色条留出空间
+    plt.tight_layout(rect=[0, 0, 0.92, 0.95])  # Leave space for color bar
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    # 保存为pdf格式
+    # Save as pdf format
     plt.savefig(output_path.replace('.png', '.pdf'), dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Spatial distribution heatmap saved to: {output_path}")
 
 def plot_category_statistics(instances, object_size, output_path):
-    """绘制类别统计柱状图，每个category的三个size分组显示，去除数字标注"""
-    # 统计每个类别每个尺寸的实例数量
+    """Plot category statistics histogram, display three sizes for each category, remove numeric labels"""
+    # Count instances for each category and size
     category_size_counts = defaultdict(lambda: defaultdict(int))
     
-    # 计算每个类别每个尺寸的计数
+    # Count instances for each category and size
     for instance in instances:
         category = instance['category']
-        size = instance.get('object_size', 'size1')  # 使用object_size而不是size字段
+        size = instance.get('object_size', 'size1')  # Use object_size instead of size field
         category_size_counts[category][size] += 1
     
-    # 排序类别
+    # Sort categories
     categories = sorted(category_size_counts.keys())
     
-    # 设置尺寸标签和使用更强烈的对比色
+    # Set size labels and use stronger contrast colors
     size_ranges = ["Size1 (0-5%)", "Size2 (5-15%)", "Size3 (15-30%)"]
     size_labels = ["size1", "size2", "size3"]
-    # 使用更强烈的对比色代替原来的蓝色渐变
+    # Use stronger contrast colors instead of original blue gradient
     size_colors = ['#3498db', '#2ecc71', '#e74c3c']  # 蓝色、绿色、红色
     
-    # 创建x轴位置
+    # Create x-axis position
     x = np.arange(len(categories))
     width = 0.25  # 柱的宽度
     
-    # 创建图形
+    # Create plot
     plt.figure(figsize=(14, 8), facecolor='white')
     
-    # 绘制每个尺寸的柱状图
+    # Plot histogram for each size
     bars = []
     for i, size in enumerate(size_labels):
         counts = [category_size_counts[cat].get(size, 0) for cat in categories]
@@ -226,32 +226,32 @@ def plot_category_statistics(instances, object_size, output_path):
                       color=size_colors[i], edgecolor='#333333')
         bars.append(bar)
     
-    # 设置x轴刻度和标签
+    # Set x-axis ticks and labels
     plt.xticks(x, categories, rotation=45, ha='right', fontsize=18)
     plt.ylabel('Instance Count', fontsize=22)
     plt.yticks(fontsize=18)
     
-    # 添加标题
+    # Add title
     plt.title(f"{object_size} Object Distribution by Category", fontsize=23, fontweight='bold')
     
-    # 添加图例，字号增大两号
+    # Add legend, font size increased two sizes
     plt.legend(fontsize=16, loc='upper right', bbox_to_anchor=(1, 1.1))
     
-    # 添加网格线
+    # Add grid lines
     plt.grid(axis='y', linestyle='--', alpha=0.5)
-    plt.gca().set_axisbelow(True)  # 确保网格线在柱子下方
-    # 隐藏右侧和上测的边框
+    plt.gca().set_axisbelow(True)
     plt.gca().spines['right'].set_visible(False)
     plt.gca().spines['top'].set_visible(False)
     
-    # 调整布局并保存
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.savefig(output_path.replace('.png', '.pdf'), dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Category statistics chart saved to: {output_path}")
+
+
 def map_size_format(instances):
-    """将 object_size 字段从百分比格式转换为 size1/size2/size3 格式"""
+    """Map object_size field from percentage format to size1/size2/size3 format"""
     size_mapping = {
         "0-5%": "size1",
         "5-15%": "size2", 

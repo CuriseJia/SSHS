@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-基于pycochleagram库的数据预处理流程
-将.wav格式的音频转换为耳蜗电图并保存
+Data preprocessing pipeline based on pycochleagram library
+Convert .wav format audio to cochleagram and save
 """
 
 import os
@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 import logging
 
-# 设置matplotlib后端
 import matplotlib
 matplotlib.use('Agg')
 
@@ -23,7 +22,7 @@ from pycochleagram import utils
 
 
 class CochleagramPreprocessor:
-    """耳蜗电图数据预处理器"""
+    """Cochleagram data preprocessor"""
     
     def __init__(self, 
                  sr: int = 16000,
@@ -42,21 +41,21 @@ class CochleagramPreprocessor:
                  post_rectify: bool = True,
                  power_point_three: bool = True):
         """
-        初始化预处理器
+        Initialize preprocessor
         
         Args:
-            sr: 采样率
-            n_filters: 滤波器数量 (默认64)
-            low_lim: 低频限制 (Hz)
-            hi_lim: 高频限制 (Hz)
-            sample_factor: 采样因子 (1, 2, 4)
-            downsample_factor: 下采样因子，None表示不下采样
-            nonlinearity: 非线性变换类型 ('db', 'power', None)
-            strict: 是否使用严格模式
-            max_duration: 最大音频时长 (秒)
-            target_duration: 目标音频时长 (秒)，用于标准化耳蜗电图时间维度
-            ihc_lowpass_cutoff: IHC低通滤波器截止频率 (Hz，默认3000Hz)
-            ihc_lowpass_order: IHC低通滤波器阶数 (默认7阶)
+            sr: Sampling rate
+            n_filters: Number of filters (default 64)
+            low_lim: Low frequency limit (Hz)
+            hi_lim: High frequency limit (Hz)
+            sample_factor (1, 2, 4)
+            downsample_factor: downsampling factor, None indicates no downsampling
+            nonlinearity: Nonlinear transformation type ('db ',' power ', None)
+            strict: whether to use strict mode
+            max_duration: Maximum audio duration (seconds)
+            target_duration: Target audio duration (seconds), used to standardize the temporal dimension of cochlear electrograms
+            ihc_lowpass_cutoff: Cut off frequency of IHC low-pass filter (Hz, default 3000Hz)
+            ihc_lowpass_order: IHC low-pass filter order (default order 7)
         """
         self.sr = sr
         self.n_filters = n_filters
@@ -81,45 +80,45 @@ class CochleagramPreprocessor:
         
     def load_audio(self, audio_path: str) -> Tuple[np.ndarray, int]:
         """
-        加载音频文件
+        Load audio file
         
         Args:
-            audio_path: 音频文件路径
+            audio_path: Audio file path
             
         Returns:
-            (signal, sr): 音频信号和采样率
+            (signal, sr): Audio signal and sampling rate
         """
         
         if not os.path.exists(audio_path):
-            raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-        # 使用pycochleagram的utils加载音频
+        # Use pycochleagram's utils to load audio
         signal, sr = utils.wav_to_array(audio_path)
         
-        # 保留多声道；后续在生成耳蜗图时分别处理左右声道
+        # Keep multi-channel; process left and right channels separately later when generating cochleagram
         if len(signal.shape) > 1 and signal.shape[1] > 1:
-            self.logger.info(f"检测到立体声音频，将分别处理左右声道 (形状: {signal.shape})")
+            self.logger.info(f"Detected stereo audio, will process left and right channels separately (shape: {signal.shape})")
         
-        # 如果需要重采样
+        # If need to resample
         if sr != self.sr:
-            self.logger.info(f"重采样从 {sr}Hz 到 {self.sr}Hz")
-            # 这里可以添加重采样逻辑
-            # 暂时使用简单的下采样
+            self.logger.info(f"Resampling from {sr}Hz to {self.sr}Hz")
+            # Here can add resampling logic
+            # Currently use simple downsampling
             if sr > self.sr:
                 factor = sr // self.sr
                 signal = signal[::factor]
                 sr = self.sr
         
-        # 截断音频到指定时长（支持单/多声道）
+        # Truncate audio to specified duration (support single/multi-channel)
         max_samples = int(self.max_duration * sr)
         num_samples = signal.shape[0]
         if num_samples > max_samples:
-            self.logger.info(f"截断音频从 {num_samples} 样本到 {max_samples} 样本 (时长: {self.max_duration}秒)")
+            self.logger.info(f"Truncating audio from {num_samples} samples to {max_samples} samples (duration: {self.max_duration} seconds)")
             signal = signal[:max_samples, ...] if signal.ndim > 1 else signal[:max_samples]
         else:
-            self.logger.info(f"音频时长: {num_samples / sr:.2f}秒 (未超过限制 {self.max_duration}秒)")
+            self.logger.info(f"Audio duration: {num_samples / sr:.2f} seconds (not exceeding limit {self.max_duration} seconds)")
 
-        # 若需要对齐到固定2-5秒三秒窗口
+        # If need to align to fixed 2-5 second three-second window
         if self.align_window_2_to_5:
             need_total = int(5.0 * sr)
             cur_len = signal.shape[0]
@@ -129,76 +128,76 @@ class CochleagramPreprocessor:
                     signal = np.pad(signal, (0, pad), mode='constant', constant_values=0)
                 else:
                     signal = np.pad(signal, ((0, pad), (0, 0)), mode='constant', constant_values=0)
-                self.logger.info(f"为2-5秒窗口填充到5秒: pad={pad} 样本")
+                self.logger.info(f"Padding 2-5 second window to 5 seconds: pad={pad} samples")
             start = int(2.0 * sr)
             end = int(5.0 * sr)
             signal = signal[start:end, ...] if signal.ndim > 1 else signal[start:end]
-            self.logger.info(f"已裁剪到固定窗口 [2s, 5s): {signal.shape[0]} 样本")
+            self.logger.info(f"Truncated to fixed window [2s, 5s): {signal.shape[0]} samples")
         else:
-            # 如果指定了目标时长，进行标准化处理
+            # If specified target duration, perform standardization processing
             if self.target_duration is not None:
                 target_samples = int(self.target_duration * sr)
-                self.logger.info(f"目标时长: {self.target_duration}秒, 目标样本数: {target_samples}")
+                self.logger.info(f"Target duration: {self.target_duration} seconds, target samples: {target_samples}")
                 cur_len = signal.shape[0]
                 if cur_len < target_samples:
-                    # 填充零（支持多声道）
+                    # Pad zero (support multi-channel)
                     padding = target_samples - cur_len
                     if signal.ndim == 1:
                         signal = np.pad(signal, (0, padding), mode='constant', constant_values=0)
                     else:
                         signal = np.pad(signal, ((0, padding), (0, 0)), mode='constant', constant_values=0)
-                    self.logger.info(f"填充音频从 {cur_len} 样本到 {target_samples} 样本")
+                    self.logger.info(f"Padding audio from {cur_len} samples to {target_samples} samples")
                 elif cur_len > target_samples:
-                    # 截断（支持多声道）
+                    # Truncate (support multi-channel)
                     signal = signal[:target_samples, ...] if signal.ndim > 1 else signal[:target_samples]
-                    self.logger.info(f"截断音频从 {cur_len} 样本到 {target_samples} 样本")
+                    self.logger.info(f"Truncating audio from {cur_len} samples to {target_samples} samples")
                 else:
-                    self.logger.info(f"音频长度已匹配目标长度: {signal.shape[0]} 样本")
+                    self.logger.info(f"Audio length matches target length: {signal.shape[0]} samples")
         
         return signal, sr
     
     def generate_cochleagram(self, signal: np.ndarray, sr: int) -> np.ndarray:
         """
-        生成耳蜗电图
+        Generate cochleagram
         
         Args:
-            signal: 音频信号
-            sr: 采样率
+            signal: Audio signal
+            sr: Sampling rate
             
         Returns:
-            cochleagram: 耳蜗电图数组
+            cochleagram: Cochleagram array
         """
-        # 移除耳蜗电图生成开始日志
+        # Remove cochleagram generation start log
         
-        # 动态调整高频限制，避免超过奈奎斯特频率
+        # Dynamic adjustment of high frequency limit, avoid exceeding Nyquist frequency
         nyquist_freq = sr // 2
         adjusted_hi_lim = min(self.hi_lim, nyquist_freq)
         if adjusted_hi_lim != self.hi_lim:
-            self.logger.info(f"调整高频限制从 {self.hi_lim}Hz 到 {adjusted_hi_lim}Hz (奈奎斯特频率: {nyquist_freq}Hz)")
+            self.logger.info(f"Adjusting high frequency limit from {self.hi_lim}Hz to {adjusted_hi_lim}Hz (Nyquist frequency: {nyquist_freq}Hz)")
         
-        # 记录IHC低通滤波器参数用于phase locking控制
+        # Record IHC low-pass filter parameters for phase locking control
         # self.logger.info(f"IHC低通滤波器参数: 截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
         
-        # 智能调整下采样因子，确保整数倍关系
+        # Smart adjustment of downsampling factor, ensure integer multiple relationship
         adjusted_downsample = self.downsample_factor
         if adjusted_downsample is not None:
-            # 对于pycochleagram的poly模式，downsample参数被解释为env_sr（下采样后的采样率）
-            # 需要确保audio_sr/env_sr是整数
+            # For pycochleagram's poly mode, downsample parameter is interpreted as env_sr (downsampled sampling rate)
+            # Need to ensure audio_sr/env_sr is an integer
             audio_sr = sr
-            env_sr = adjusted_downsample  # 这里adjusted_downsample就是env_sr
+            env_sr = adjusted_downsample  # Here adjusted_downsample is env_sr
             
-            # 检查是否为整数倍关系
+            # Check if it is an integer multiple relationship
             if audio_sr % env_sr != 0:
-                # 找到最接近的整数env_sr，确保audio_sr能被整除
-                # 计算下采样因子
+                # Find the closest integer env_sr, ensure audio_sr can be divided
+                # Calculate downsampling factor
                 downsample_factor = audio_sr // env_sr
                 target_env_sr = audio_sr // downsample_factor
                 
                 if target_env_sr != env_sr:
-                    self.logger.info(f"调整下采样因子从 {adjusted_downsample} 到 {target_env_sr} (audio_sr: {audio_sr}, 下采样因子: {downsample_factor})")
+                    self.logger.info(f"Adjusting downsampling factor from {adjusted_downsample} to {target_env_sr} (audio_sr: {audio_sr}, downsampling factor: {downsample_factor})")
                     adjusted_downsample = target_env_sr
         
-        # 生成耳蜗电图（支持单/双声道）。若为立体声，分别处理左右声道并在最后一维堆叠为2通道。
+        # Generate cochleagram (support single/dual channel). If it is stereo, process left and right channels separately and stack in the last dimension as 2 channels.
         if signal.ndim == 2 and signal.shape[1] >= 2:
             left = signal[:, 0]
             right = signal[:, 1]
@@ -239,7 +238,7 @@ class CochleagramPreprocessor:
                 coch_L = np.power(coch_L, 0.3)
                 coch_R = np.power(coch_R, 0.3)
 
-            # 最后一维为声道数: [F, T, 2]
+            # Last dimension is channel number: [F, T, 2]
             coch = np.stack([coch_L, coch_R], axis=-1)
             return coch
         else:
@@ -268,18 +267,18 @@ class CochleagramPreprocessor:
     def save_cochleagram(self, cochleagram: np.ndarray, output_path: str, 
                         save_format: str = 'npy') -> None:
         """
-        保存耳蜗电图
+        Save cochleagram
         
         Args:
-            cochleagram: 耳蜗电图数组
-            output_path: 输出路径
-            save_format: 保存格式 ('npy', 'npz', 'png')
+            cochleagram: Cochleagram array
+            output_path: Output path
+            save_format: Save format ('npy', 'npz', 'png')
         """
-        self.logger.info(f"保存耳蜗电图到: {output_path}")
+        self.logger.info(f"Saving cochleagram to: {output_path}")
         
-        # 确保输出目录存在
+        # Ensure output directory exists
         output_dir = os.path.dirname(output_path)
-        if output_dir:  # 只有当路径包含目录时才创建
+        if output_dir:  # Only create when path contains directory
             os.makedirs(output_dir, exist_ok=True)
         
         if save_format == 'npy':
@@ -289,78 +288,77 @@ class CochleagramPreprocessor:
         elif save_format == 'png':
             self._save_as_image(cochleagram, output_path)
         else:
-            raise ValueError(f"不支持的保存格式: {save_format}")
+            raise ValueError(f"Unsupported save format: {save_format}")
             
-        self.logger.info(f"耳蜗电图已保存: {output_path}")
+        self.logger.info(f"Cochleagram saved to: {output_path}")
     
     def _apply_bez2018_phase_locking(self, cochleagram: np.ndarray, sr: int) -> np.ndarray:
         """
-        基于BEZ2018模型的phase locking控制
+        Phase locking control based on BEZ2018 model
         
-        根据文献描述，通过调整IHC低通滤波器的截止频率来控制phase locking上限。
-        在未修改的听觉神经模型中，IHC膜电位的低通特性被建模为截止频率为3000Hz的7阶滤波器。
+        According to the literature, phase locking is controlled by adjusting the cutoff frequency of the IHC low-pass filter.
+        In the unmodified auditory nerve model, the low-pass characteristic of IHC membrane potential is modeled as a 7th order filter with a cutoff frequency of 3000Hz.
         
         Args:
-            cochleagram: 耳蜗电图数组
-            sr: 采样率
+            cochleagram: Cochleagram array
+            sr: Sampling rate
             
         Returns:
-            处理后的耳蜗电图
+            Processed cochleagram
         """
-        # self.logger.info(f"应用BEZ2018 phase locking控制: IHC低通滤波器截止频率={self.ihc_lowpass_cutoff}Hz, 阶数={self.ihc_lowpass_order}")
         
-        # 计算每个滤波器对应的中心频率
+        # Calculate the center frequency for each filter
         n_filters = cochleagram.shape[0]
         freqs = np.logspace(np.log10(self.low_lim), np.log10(self.hi_lim), n_filters)
         
-        # 应用基于IHC低通滤波器的phase locking控制
+        # Apply phase locking control based on IHC low-pass filter
         for i, freq in enumerate(freqs):
-            # 对于高于IHC低通滤波器截止频率的频率，应用phase locking限制
+            # For frequencies higher than the IHC low-pass filter cutoff frequency, apply phase locking limit
             if freq > self.ihc_lowpass_cutoff:
-                # 计算phase locking衰减因子
-                # 基于BEZ2018模型的IHC低通滤波器特性
+                # Calculate phase locking attenuation factor
+                # Based on BEZ2018 model's IHC low-pass filter characteristic
                 attenuation_factor = self._calculate_phase_locking_attenuation(freq)
                 
-                # 应用衰减
+                # Apply attenuation
                 cochleagram[i, :] = cochleagram[i, :] * attenuation_factor
                 
-                self.logger.debug(f"滤波器 {i} (中心频率: {freq:.1f}Hz) 应用phase locking衰减: {attenuation_factor:.3f}")
+                self.logger.debug(f"Filter {i} (center frequency: {freq:.1f}Hz) applied phase locking attenuation: {attenuation_factor:.3f}")
         
         return cochleagram
     
     def _calculate_phase_locking_attenuation(self, frequency: float) -> float:
         """
-        计算基于BEZ2018模型的phase locking衰减因子
+        Calculate phase locking attenuation factor based on BEZ2018 model
         
         Args:
-            frequency: 频率 (Hz)
+            frequency: Frequency (Hz)
             
         Returns:
-            衰减因子 (0-1之间)
+            Attenuation factor (between 0 and 1)
         """
-        # 基于BEZ2018模型的IHC低通滤波器特性
-        # 使用Butterworth低通滤波器的频率响应特性
+        # Based on BEZ2018 model's IHC low-pass filter characteristic
+        # Using Butterworth low-pass filter's frequency response characteristic
         cutoff_freq = self.ihc_lowpass_cutoff
         order = self.ihc_lowpass_order
         
-        # 计算归一化频率
+        # Calculate normalized frequency
         normalized_freq = frequency / cutoff_freq
         
-        # 计算Butterworth低通滤波器的幅度响应
+        # Calculate Butterworth low-pass filter's magnitude response
         # |H(f)| = 1 / sqrt(1 + (f/fc)^(2n))
         magnitude_response = 1.0 / np.sqrt(1.0 + (normalized_freq ** (2 * order)))
         
-        # 对于phase locking，我们使用更严格的衰减
-        # 根据文献，phase locking在1500Hz以上开始显著下降
+        # For phase locking, we use a stricter attenuation
+        # According to the literature, phase locking starts to significantly decrease above 1500Hz
         if frequency > 1500:
-            # 额外的phase locking衰减
+            # Additional phase locking attenuation
             phase_lock_attenuation = np.exp(-(frequency - 1500) / 1000)
             magnitude_response *= phase_lock_attenuation
         
         return magnitude_response
     
     def _save_as_image(self, cochleagram: np.ndarray, output_path: str) -> None:
-        """保存为图像文件（支持单/双声道）。"""
+        """Save as image file (support single/dual channel)."""
         if cochleagram.ndim == 2:
             plt.figure(figsize=(10, 6))
             utils.cochshow(cochleagram, interact=False)
@@ -386,7 +384,7 @@ class CochleagramPreprocessor:
             fig.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
         else:
-            # 回退到展示第一个通道，避免异常
+            # Fall back to displaying the first channel, avoid exception
             plt.figure(figsize=(10, 6))
             to_show = cochleagram[..., 0] if cochleagram.ndim == 3 else cochleagram
             utils.cochshow(to_show, interact=False)
@@ -401,24 +399,24 @@ class CochleagramPreprocessor:
     def process_single_file(self, input_path: str, output_path: str, 
                            save_format: str = 'npy') -> Dict[str, Any]:
         """
-        处理单个音频文件
+        Process single audio file
         
         Args:
-            input_path: 输入音频文件路径
-            output_path: 输出文件路径
-            save_format: 保存格式
+            input_path: Input audio file path
+            output_path: Output file path
+            save_format: Save format
             
         Returns:
-            处理结果信息
+            Processing result information
         """
         try:
-            # 加载音频
+            # Load audio
             signal, sr = self.load_audio(input_path)
             
-            # 生成耳蜗电图
+            # Generate cochleagram
             cochleagram = self.generate_cochleagram(signal, sr)
             
-            # 保存结果
+            # Save result
             self.save_cochleagram(cochleagram, output_path, save_format)
             
             result = {
@@ -431,11 +429,11 @@ class CochleagramPreprocessor:
                 'duration': len(signal) / sr
             }
             
-            self.logger.info(f"处理成功: {input_path}")
+            self.logger.info(f"Processing successful: {input_path}")
             return result
             
         except Exception as e:
-            self.logger.error(f"处理失败 {input_path}: {str(e)}")
+            self.logger.error(f"Processing failed {input_path}: {str(e)}")
             return {
                 'success': False,
                 'input_path': input_path,
@@ -445,39 +443,39 @@ class CochleagramPreprocessor:
     def process_batch(self, input_dir: str, output_dir: str, 
                      file_pattern: str = '*.wav', save_format: str = 'npy') -> Dict[str, Any]:
         """
-        批量处理音频文件
+        Batch process audio files
         
         Args:
-            input_dir: 输入目录
-            output_dir: 输出目录
-            file_pattern: 文件匹配模式
-            save_format: 保存格式
+            input_dir: Input directory
+            output_dir: Output directory
+            file_pattern: File matching pattern
+            save_format: Save format
             
         Returns:
-            批量处理结果
+            Batch processing result
         """
         input_path = Path(input_dir)
         output_path = Path(output_dir)
         
-        # 查找所有匹配的音频文件
+        # Find all matching audio files
         audio_files = list(input_path.glob(file_pattern))
         
         if not audio_files:
-            self.logger.warning(f"在 {input_dir} 中没有找到匹配 {file_pattern} 的文件")
+            self.logger.warning(f"No matching files found in {input_dir} for {file_pattern}")
             return {'total': 0, 'success': 0, 'failed': 0, 'results': []}
         
-        self.logger.info(f"找到 {len(audio_files)} 个音频文件")
+        self.logger.info(f"Found {len(audio_files)} audio files")
         
         results = []
         success_count = 0
         failed_count = 0
         
         for audio_file in audio_files:
-            # 构建输出文件路径
+            # Build output file path
             relative_path = audio_file.relative_to(input_path)
             output_file = output_path / relative_path.with_suffix(f'.{save_format}')
             
-            # 处理文件
+            # Process file
             result = self.process_single_file(str(audio_file), str(output_file), save_format)
             results.append(result)
             
@@ -493,38 +491,38 @@ class CochleagramPreprocessor:
             'results': results
         }
         
-        self.logger.info(f"批量处理完成: 总计 {len(audio_files)}, 成功 {success_count}, 失败 {failed_count}")
+        self.logger.info(f"Batch processing completed: Total {len(audio_files)}, Success {success_count}, Failed {failed_count}")
         return batch_result
 
 
 def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(description='音频文件转耳蜗电图预处理工具')
-    parser.add_argument('input', help='输入音频文件或目录路径')
-    parser.add_argument('output', help='输出文件或目录路径')
-    parser.add_argument('--sr', type=int, default=16000, help='采样率 (默认: 16000)')
-    parser.add_argument('--n-filters', type=int, default=64, help='滤波器数量 (默认: 64)')
-    parser.add_argument('--low-lim', type=int, default=50, help='低频限制 (默认: 50Hz)')
-    parser.add_argument('--hi-lim', type=int, default=20000, help='高频限制 (默认: 20000Hz)')
+    """Main function"""
+    parser = argparse.ArgumentParser(description='Audio file to cochleagram preprocessing tool')
+    parser.add_argument('input', help='Input audio file or directory path')
+    parser.add_argument('output', help='Output file or directory path')
+    parser.add_argument('--sr', type=int, default=16000, help='Sampling rate (default: 16000)')
+    parser.add_argument('--n-filters', type=int, default=64, help='Number of filters (default: 64)')
+    parser.add_argument('--low-lim', type=int, default=50, help='Low frequency limit (default: 50Hz)')
+    parser.add_argument('--hi-lim', type=int, default=20000, help='High frequency limit (default: 20000Hz)')
     parser.add_argument('--sample-factor', type=int, default=1, choices=[1, 2, 4], 
-                       help='采样因子 (默认: 1)')
-    parser.add_argument('--downsample', type=int, help='下采样因子 (默认: 不下采样)')
+                       help='Sampling factor (default: 1)')
+    parser.add_argument('--downsample', type=int, help='Downsampling factor (default: no downsampling)')
     parser.add_argument('--nonlinearity', choices=['db', 'power', 'none'], default='power',
-                       help='非线性变换类型 (默认: power)')
+                       help='Nonlinear transformation type (default: power)')
     parser.add_argument('--max-duration', type=float, default=10.0,
-                       help='最大音频时长 (秒) (默认: 10.0)')
+                       help='Maximum audio duration (seconds) (default: 10.0)')
     parser.add_argument('--ihc-lowpass-cutoff', type=float, default=3000.0,
-                       help='IHC低通滤波器截止频率 (Hz) (默认: 3000.0)')
+                       help='IHC low-pass filter cutoff frequency (Hz) (default: 3000.0)')
     parser.add_argument('--ihc-lowpass-order', type=int, default=7,
-                       help='IHC低通滤波器阶数 (默认: 7)')
+                       help='IHC low-pass filter order (default: 7)')
     parser.add_argument('--format', choices=['npy', 'npz', 'png'], default='npy',
-                       help='输出格式 (默认: npy)')
-    parser.add_argument('--batch', action='store_true', help='批量处理模式')
-    parser.add_argument('--pattern', default='*.wav', help='文件匹配模式 (默认: *.wav)')
+                       help='Output format (default: npy)')
+    parser.add_argument('--batch', action='store_true', help='Batch processing mode')
+    parser.add_argument('--pattern', default='*.wav', help='File matching pattern (default: *.wav)')
     
     args = parser.parse_args()
     
-    # 创建预处理器
+    # Create preprocessor
     preprocessor = CochleagramPreprocessor(
         sr=args.sr,
         n_filters=args.n_filters,
@@ -539,32 +537,32 @@ def main():
     )
     
     if args.batch:
-        # 批量处理模式
+        # Batch processing mode
         result = preprocessor.process_batch(args.input, args.output, args.pattern, args.format)
-        print(f"\n批量处理结果:")
-        print(f"总计: {result['total']}")
-        print(f"成功: {result['success']}")
-        print(f"失败: {result['failed']}")
+        print(f"\nBatch processing result:")
+        print(f"Total: {result['total']}")
+        print(f"Success: {result['success']}")
+        print(f"Failed: {result['failed']}")
         
-        # 显示失败的文件
+        # Display failed files
         failed_files = [r for r in result['results'] if not r['success']]
         if failed_files:
-            print(f"\n失败的文件:")
+            print(f"\nFailed files:")
             for f in failed_files:
                 print(f"  {f['input_path']}: {f['error']}")
     else:
-        # 单文件处理模式
+        # Single file processing mode
         result = preprocessor.process_single_file(args.input, args.output, args.format)
         if result['success']:
-            print(f"\n处理成功:")
-            print(f"输入文件: {result['input_path']}")
-            print(f"输出文件: {result['output_path']}")
-            print(f"信号形状: {result['signal_shape']}")
-            print(f"耳蜗电图形状: {result['cochleagram_shape']}")
-            print(f"采样率: {result['sr']}Hz")
-            print(f"时长: {result['duration']:.2f}秒")
+            print(f"\nProcessing successful:")
+            print(f"Input file: {result['input_path']}")
+            print(f"Output file: {result['output_path']}")
+            print(f"Signal shape: {result['signal_shape']}")
+            print(f"Cochleagram shape: {result['cochleagram_shape']}")
+            print(f"Sampling rate: {result['sr']}Hz")
+            print(f"Duration: {result['duration']:.2f} seconds")
         else:
-            print(f"\n处理失败: {result['error']}")
+            print(f"\nProcessing failed: {result['error']}")
 
 
 if __name__ == '__main__':

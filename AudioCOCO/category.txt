@@ -1,0 +1,12 @@
+dog
+cat
+bird
+person
+horse
+train
+motocycle
+elephant
+boat
+plane
+cow
+keyboard

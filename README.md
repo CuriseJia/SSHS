@@ -36,9 +36,21 @@ git submodule update
 git submodule update --init --recursive
 ```
 
-### Dataset Generation
+### Dataset Preparation
 
-Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console.
+If you want to build the full **AudioCOCO**, please following the next guidance.
+
+1. Download the [MS-COCO](https://cocodataset.org/#home) and [VGG-Sound](https://github.com/hche11/VGGSound).
+
+2. Use the [select_image.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/select_image.py) to select images which contain the sounding objects.
+
+3. Use the [filter_audio.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/filter_audio.py) and [filter_image.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/filter_image.py) files to filter the high-quaility part.
+
+4. Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console. For a reference, each audio needs about 10 seconds to render.
+
+5. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram.
+
+
 
 ### Training
 The training dataset contains about 1,800,000 pairs, and you can use Unity to generate and train. 
@@ -52,11 +64,16 @@ The test dataset and the checkpoint can be downloaded here.
 python test.py --pretrained_path path_to_the_checkpoint_file
 ```
 
+### Human Experiment Result Evaluation
+```shell
+python calculate.py
+```
+
 <div align=center>
 
-|Datasets|Checkpoint|
-|:--------:|:--------------:|
-| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/u/1/folders/1kCKV9_ZCoAOs_K9dVYtuJL_CYaQMP-6x) |
+|Datasets|Checkpoint|HumanResult|
+|:--------:|:--------------:|:--------:|
+| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/u/1/folders/1kCKV9_ZCoAOs_K9dVYtuJL_CYaQMP-6x) | [Download](https://drive.google.com/drive/folders/1_DuocnnxX_gqjuCG8LM4buq2RphSQha-?usp=sharing) |
 
 </div>
 

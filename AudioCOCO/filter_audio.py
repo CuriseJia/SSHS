@@ -9,16 +9,16 @@ from tqdm import tqdm
 import pandas as pd
 import csv
 
-# 加载预训练模型
+# Load pretrained model
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
 model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
 
-# 设置主文件夹路径
+# Set main folder path
 main_folder_path = "/home/yanhao/VGG-Sound-Audios/train"
 results_folder = os.path.join(main_folder_path, "filtering_results")
 os.makedirs(results_folder, exist_ok=True)
 
-# 创建结果汇总CSV文件
+# Create summary results CSV file
 summary_csv_path = os.path.join(results_folder, "summary_results.csv")
 csv_header = ["Category", "Original_Files", "Original_Spatial", "Original_Spectral", "Original_Semantic",
               "Semantic_80_Files", "Semantic_80_Spatial", "Semantic_80_Spectral", "Semantic_80_Semantic",
@@ -56,7 +56,7 @@ def compute_semantic_consistency(audio_file, processor, model):
 def process_category_folder(category_folder):
     print(f"\n\n===== Processing category: {os.path.basename(category_folder)} =====")
     
-    # 获取文件夹中的所有WAV文件
+    # Get all WAV files in the folder
     audio_files = [os.path.join(category_folder, f) for f in os.listdir(category_folder) 
                   if f.endswith('.wav')]
     
@@ -93,20 +93,20 @@ def process_category_folder(category_folder):
         print(f"Skipping {category_folder}, insufficient valid files: {len(valid_files)}")
         return None
     
-    # 转换为numpy数组
+    # Convert to numpy array
     semantic_embeddings = np.array(semantic_embeddings)
     spectral_embeddings = np.array(spectral_embeddings)
     spitial_embeddings = np.array(spitial_embeddings)
     
-    # 计算相似度矩阵
+    # Compute similarity matrix
     semantic_matrix = cosine_similarity(semantic_embeddings)
     spectral_matrix = cosine_similarity(spectral_embeddings)
     
-    # 计算上三角平均值（不包括对角线）
+    # Compute upper triangular average (excluding diagonal)
     N = semantic_matrix.shape[0]
-    top80 = max(int(N * 0.8), 1)  # 修改原来的80%为80%
-    top65 = max(int(N * 0.65), 1)  # 修改原来的50%为65% 
-    top50 = max(int(N * 0.5), 1)  # 保留原来的50%
+    top80 = max(int(N * 0.8), 1)  # Modify original 80% to 80%
+    top65 = max(int(N * 0.65), 1)  # Modify original 50% to 65% 
+    top50 = max(int(N * 0.5), 1)  # Keep original 50%
     
     semantic_sum = 0.0
     spectral_sum = 0.0
@@ -126,35 +126,35 @@ def process_category_folder(category_folder):
     print(f"Original Spectral Consistency: {spectral_score:.4f}")
     print(f"Original Semantic Consistency: {semantic_score:.4f}")
     
-    # 修改过滤流程，检查每次过滤后的文件数量
+    # Modify filtering process, check number of files after each filtering
 
-    # --- 第1步：基于语义一致性过滤，保留前80%的音频 ---
+    # --- Step 1: Filter based on semantic consistency, keep top 80% of audio ---
     semantic_avg_sim = []
     for i in range(len(semantic_matrix)):
-        # 排除自相似度（对角线元素）
+        # Exclude self-similarity (diagonal elements)
         sim_scores = np.concatenate([semantic_matrix[i, :i], semantic_matrix[i, i+1:]])
         semantic_avg_sim.append(np.mean(sim_scores))
     
-    # 按平均相似度降序排序
+    # Sort by average similarity in descending order
     indices_semantic_sorted = np.argsort(semantic_avg_sim)[::-1]
-    # 选择前80%的音频文件
+    # Select top 80% of audio files
     top80_indices = indices_semantic_sorted[:top80]
     
-    # 获取原始列表中的相应文件
+    # Get corresponding files from original list
     selected_files_80 = [valid_files[i] for i in top80_indices]
     print(f"Total audio files: {len(valid_files)}")
     print(f"Keeping top 80% audio files after semantic filtering: {len(selected_files_80)}")
     
-    # 检查第一次过滤后是否至少有20个文件
+    # Check if there are at least 20 files after the first filtering
     if len(selected_files_80) < 20:
         print(f"\n⚠️ Warning: After semantic filtering, only {len(selected_files_80)} files remain (< 20)")
         print(f"Keeping all original {len(valid_files)} files")
         
-        # 使用所有原始文件作为最终结果
+        # Use all original files as final result
         selected_files_50 = valid_files
         final_indices = list(range(len(valid_files)))
         
-        # 设置所有指标为原始值
+        # Set all metrics to original values
         avg_semantic_80 = semantic_score
         avg_spectral_80 = spectral_score
         avg_spitial_80 = spitial_score
@@ -167,13 +167,13 @@ def process_category_folder(category_folder):
         avg_spectral_50 = spectral_score
         avg_spitial_50 = spitial_score
         
-        # 跳过后续的过滤步骤
+        # Skip subsequent filtering steps
         use_original = True
     else:
-        # 继续正常的过滤流程
+        # Continue normal filtering process
         use_original = False
         
-        # 收集相应的分数
+        # Collect corresponding scores
         semantic_scores_80 = semantic_embeddings[top80_indices]
         spectral_scores_80 = spectral_embeddings[top80_indices]
         spitial_scores_80 = []
@@ -182,7 +182,7 @@ def process_category_folder(category_folder):
                 spitial_scores_80.append(spitial_embeddings[idx])
         spitial_scores_80 = np.array(spitial_scores_80)
         
-        # 计算平均值
+        # Compute average
         semantic_matrix_80 = cosine_similarity(semantic_scores_80)
         spectral_matrix_80 = cosine_similarity(spectral_scores_80)
         
@@ -204,36 +204,36 @@ def process_category_folder(category_folder):
         print(f"After semantic filtering - Average spectral consistency: {avg_spectral_80:.4f}")
         print(f"After semantic filtering - Average semantic consistency: {avg_semantic_80:.4f}")
         
-        # --- 第2步：基于频谱一致性过滤，从前80%的音频中保留前65% ---
-        # 计算频谱相似度矩阵
+        # --- Step 2: Filter based on spectral consistency, keep top 65% of audio from top 80% ---
+        # Compute spectral similarity matrix
         spectral_avg_sim = []
         for i in range(len(spectral_matrix_80)):
             sim_scores = np.concatenate([spectral_matrix_80[i, :i], spectral_matrix_80[i, i+1:]])
             spectral_avg_sim.append(np.mean(sim_scores))
         
-        # 按平均相似度降序排序
+        # Sort by average similarity in descending order
         indices_spectral_sorted = np.argsort(spectral_avg_sim)[::-1]
-        # 从前80%中选择前65%的音频文件 (这里是整体的65%/80% ≈ 81.25%)
+        # Select top 65% of audio files from top 80% (here 65%/80% ≈ 81.25%)
         top65_count = max(int(len(top80_indices) * 0.8125), 1)
         top65_indices_in_80 = indices_spectral_sorted[:top65_count]
         
-        # 获取原始索引
+        # Get original indices
         top65_indices = [top80_indices[i] for i in top65_indices_in_80]
         
-        # 获取65%的音频文件
+        # Get 65% of audio files
         selected_files_65 = [valid_files[i] for i in top65_indices]
         print(f"Keeping top 65% audio files after spectral filtering: {len(selected_files_65)}")
         
-        # 检查第二次过滤后是否至少有20个文件
+        # Check if there are at least 20 files after the second filtering
         if len(selected_files_65) < 20:
             print(f"\n⚠️ Warning: After spectral filtering, only {len(selected_files_65)} files remain (< 20)")
             print(f"Using results from semantic filtering instead ({len(selected_files_80)} files)")
             
-            # 使用语义过滤后的文件作为最终结果
+            # Use semantic filtered files as final result
             selected_files_50 = selected_files_80
             final_indices = top80_indices
             
-            # 设置后续指标等于语义过滤后的值
+            # Set subsequent metrics to semantic filtered values
             avg_semantic_65 = avg_semantic_80
             avg_spectral_65 = avg_spectral_80
             avg_spitial_65 = avg_spitial_80
@@ -242,12 +242,12 @@ def process_category_folder(category_folder):
             avg_spectral_50 = avg_spectral_80
             avg_spitial_50 = avg_spitial_80
             
-            # 跳过剩余的过滤步骤
+            # Skip remaining filtering steps
             skip_last_filter = True
         else:
             skip_last_filter = False
             
-            # 收集相应的分数
+            # Collect corresponding scores
             semantic_scores_65 = semantic_embeddings[top65_indices]
             spectral_scores_65 = spectral_embeddings[top65_indices]
             spitial_scores_65 = []
@@ -256,7 +256,7 @@ def process_category_folder(category_folder):
                     spitial_scores_65.append(spitial_embeddings[idx])
             spitial_scores_65 = np.array(spitial_scores_65)
             
-            # 计算平均值
+            # Compute average
             semantic_matrix_65 = cosine_similarity(semantic_scores_65)
             spectral_matrix_65 = cosine_similarity(spectral_scores_65)
             
@@ -278,38 +278,38 @@ def process_category_folder(category_folder):
             print(f"After spectral filtering - Average spectral consistency: {avg_spectral_65:.4f}")
             print(f"After spectral filtering - Average semantic consistency: {avg_semantic_65:.4f}")
             
-            # --- 第3步：基于声道一致性过滤 ---
+            # --- Step 3: Filter based on channel consistency ---
             if len(spitial_scores_65) > 0 and not skip_last_filter:
-                # 按声道一致性降序排序
+                # Sort by channel consistency in descending order
                 channel_indices_sorted = np.argsort(spitial_scores_65)[::-1]
-                # 从前65%中选择前50%的音频文件 (这里是整体的50%/65% ≈ 76.9%)
+                # Select top 50% of audio files from top 65% (here 50%/65% ≈ 76.9%)
                 top50_count = max(int(len(top65_indices) * 0.769), 1)
                 top50_indices_in_65 = channel_indices_sorted[:top50_count]
                 
-                # 获取原始索引
+                # Get original indices
                 top50_indices = [top65_indices[i] for i in top50_indices_in_65]
                 
-                # 获取50%的音频文件
+                # Get 50% of audio files
                 selected_files_50 = [valid_files[i] for i in top50_indices]
                 print(f"Keeping top 50% audio files after spatial filtering: {len(selected_files_50)}")
                 
-                # 检查第三次过滤后是否至少有20个文件
+                # Check if there are at least 20 files after the third filtering
                 if len(selected_files_50) < 20:
                     print(f"\n⚠️ Warning: After spatial filtering, only {len(selected_files_50)} files remain (< 20)")
                     print(f"Using results from spectral filtering instead ({len(selected_files_65)} files)")
                     
-                    # 使用频谱过滤后的文件作为最终结果
+                    # Use spectral filtered files as final result
                     selected_files_50 = selected_files_65
                     final_indices = top65_indices
                     
-                    # 设置最终指标等于频谱过滤后的值
+                    # Set final metrics to spectral filtered values
                     avg_semantic_50 = avg_semantic_65
                     avg_spectral_50 = avg_spectral_65
                     avg_spitial_50 = avg_spitial_65
                 else:
                     final_indices = top50_indices
                     
-                    # 计算最终指标
+                    # Compute final metrics
                     semantic_scores_50 = semantic_embeddings[top50_indices]
                     spectral_scores_50 = spectral_embeddings[top50_indices]
                     spitial_scores_50 = []
@@ -318,7 +318,7 @@ def process_category_folder(category_folder):
                             spitial_scores_50.append(spitial_embeddings[idx])
                     spitial_scores_50 = np.array(spitial_scores_50)
                     
-                    # 计算平均值
+                    # Compute average
                     semantic_matrix_50 = cosine_similarity(semantic_scores_50)
                     spectral_matrix_50 = cosine_similarity(spectral_scores_50)
                     
@@ -341,21 +341,20 @@ def process_category_folder(category_folder):
                     print(f"After spatial filtering - Average semantic consistency: {avg_semantic_50:.4f}")
             else:
                 print("Not enough channel data for filtering in step 3")
-                # 如果没有足够的声道数据，使用频谱过滤结果
+                # If there is not enough channel data, use spectral filtered result
                 selected_files_50 = selected_files_65
                 final_indices = top65_indices
                 avg_semantic_50 = avg_semantic_65
                 avg_spectral_50 = avg_spectral_65
                 avg_spitial_50 = avg_spitial_65
 
-    # --- 保存结果和生成图表 ---
+    # --- Save results and generate charts ---
     
-    # 创建该类别的结果文件夹
+    # Create result folder for this category
     category_name = os.path.basename(category_folder)
     category_results_folder = os.path.join(results_folder, category_name)
     os.makedirs(category_results_folder, exist_ok=True)
     
-    # 生成图表
     labels = ['100% Audio', '80% Audio', '65% Audio', '50% Audio']
     channel_avgs = [spitial_score, avg_spitial_80, avg_spitial_65, avg_spitial_50]
     spectral_avgs = [spectral_score, avg_spectral_80, avg_spectral_65, avg_spectral_50]
@@ -375,15 +374,12 @@ def process_category_folder(category_folder):
     ax.set_xticklabels(labels, fontsize=16)
     ax.legend(loc='upper left', fontsize=16)
     
-    # 调整坐标轴标签的字体大小
     ax.tick_params(axis='both', which='major', labelsize=16)
     
-    # 保存图表前调整布局
     plt.tight_layout()
     plt.savefig(os.path.join(category_results_folder, 'consistency_metrics.png'))
     plt.close()
     
-    # 保存选定的文件到日志文件
     with open(os.path.join(category_results_folder, 'selected_files.txt'), 'w') as f:
         if len(selected_files_50) == len(valid_files):
             f.write("# All original files kept (filtered result < 20 files)\n")
@@ -393,7 +389,6 @@ def process_category_folder(category_folder):
         for file in selected_files_50:
             f.write(f"{os.path.basename(file)}\n")
     
-    # 将结果添加到汇总CSV文件
     with open(summary_csv_path, 'a', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([
@@ -411,15 +406,12 @@ def process_category_folder(category_folder):
         "original_scores": (spitial_score, spectral_score, semantic_score),
         "final_scores": (avg_spitial_50, avg_spectral_50, avg_semantic_50),
         "selected_files": selected_files_50,
-        "used_original": len(selected_files_50) == len(valid_files)  # 新增标记，表示是否使用了原始文件集
+        "used_original": len(selected_files_50) == len(valid_files)
     }
 
-# 获取所有子文件夹
 subdirectories = [os.path.join(main_folder_path, d) for d in os.listdir(main_folder_path) 
                  if os.path.isdir(os.path.join(main_folder_path, d)) and d != "filtering_results"]
 
-# 从subdirectories中去掉几个文件夹
-# 这些文件夹不需要处理
 excluded_folders = ['/home/yanhao/VGG-Sound-Audios/train/mouse clicking', '/home/yanhao/VGG-Sound-Audios/train/ball', '/home/yanhao/VGG-Sound-Audios/train/clock',
                     '/home/yanhao/VGG-Sound-Audios/train/zebra', '/home/yanhao/VGG-Sound-Audios/train/sheep']
 
@@ -427,7 +419,6 @@ for folder in excluded_folders:
     if folder in subdirectories:
         subdirectories.remove(folder)
 
-# 处理每个子文件夹
 results = []
 for subdir in tqdm(subdirectories, desc="Processing categories"):
     result = process_category_folder(subdir)
@@ -437,7 +428,6 @@ for subdir in tqdm(subdirectories, desc="Processing categories"):
 print(f"\nCompleted processing {len(results)} categories")
 print(f"Results saved to {results_folder}")
 
-# 创建汇总图表
 if results:
     categories = [r["category"] for r in results]
     original_channel = [r["original_scores"][0] for r in results]
@@ -447,7 +437,6 @@ if results:
     final_spectral = [r["final_scores"][1] for r in results]
     final_semantic = [r["final_scores"][2] for r in results]
     
-    # 排序类别，使其更具可读性
     sorted_indices = np.argsort(original_semantic)
     categories = [categories[i] for i in sorted_indices]
     original_channel = [original_channel[i] for i in sorted_indices]
@@ -457,8 +446,6 @@ if results:
     final_spectral = [final_spectral[i] for i in sorted_indices]
     final_semantic = [final_semantic[i] for i in sorted_indices]
     
-    # 修改汇总图表样式
-    # 绘制汇总图表
     plt.figure(figsize=(15, 12))
 
     plt.subplot(3, 1, 1)
@@ -504,65 +491,52 @@ if results:
     plt.savefig(os.path.join(results_folder, 'all_categories_comparison.pdf'))
     plt.close()
 
-# 创建汇总文件列表
 all_filtered_files_path = os.path.join(results_folder, "all_filtered_files.txt")
 
-# 收集所有过滤后的文件
 with open(all_filtered_files_path, 'w') as f:
     f.write("# All filtered files in format: category/filename\n")
     f.write("# Total categories: {}\n".format(len(results)))
     
-    # 计算过滤后的总文件数
     total_filtered_files = sum(len(r["selected_files"]) for r in results)
     f.write("# Total filtered files: {}\n\n".format(total_filtered_files))
     
-    # 遍历每个类别及其过滤后的文件
     for result in results:
         category = result["category"]
         for file_path in result["selected_files"]:
             filename = os.path.basename(file_path)
-            # 写入格式为 "category/filename"
             f.write(f"{category}/{filename}\n")
 
 print(f"All filtered files list saved to {all_filtered_files_path}")
 
-# 统计过滤后的音频文件数量
 if results:
-    # 初始化计数器
     total_original = 0
     total_after_semantic = 0
     total_after_spectral = 0
     total_after_channel = 0
     
-    # 创建结果DataFrame便于分析
     stats_df = pd.DataFrame(columns=[
         "Category", "Original", "After Semantic", "After Spectral", "After Spatial", 
         "Semantic Ratio", "Spectral Ratio", "Spatial Ratio", "Overall Ratio"
     ])
     
-    # 遍历所有处理结果
     for result in results:
         category_folder = os.path.join(main_folder_path, result["category"])
         
-        # 获取每个阶段的文件数量
         orig_files = result["original_files"]
         semantic_files = int(orig_files * 0.8)  # 80%
         spectral_files = int(orig_files * 0.65)  # 65%
         channel_files = result["final_files"]  # 50%
         
-        # 计算比例
         semantic_ratio = semantic_files / orig_files if orig_files > 0 else 0
         spectral_ratio = spectral_files / orig_files if orig_files > 0 else 0
         channel_ratio = channel_files / orig_files if orig_files > 0 else 0
         overall_ratio = channel_files / orig_files if orig_files > 0 else 0
         
-        # 添加到汇总计数
         total_original += orig_files
         total_after_semantic += semantic_files
         total_after_spectral += spectral_files
         total_after_channel += channel_files
         
-        # 添加到DataFrame
         stats_df = stats_df._append({
             "Category": result["category"],
             "Original": orig_files,
@@ -575,10 +549,8 @@ if results:
             "Overall Ratio": overall_ratio
         }, ignore_index=True)
     
-    # 保存详细统计信息
     stats_df.to_csv(os.path.join(results_folder, "filtering_statistics.csv"), index=False)
     
-    # 打印总结
     print("\n===== 音频过滤统计 =====")
     print(f"处理的类别总数: {len(results)}")
     print(f"原始音频文件总数: {total_original}")
@@ -586,14 +558,12 @@ if results:
     print(f"频谱过滤后保留文件总数: {total_after_spectral} ({total_after_spectral/total_original:.2%})")
     print(f"声道过滤后保留文件总数: {total_after_channel} ({total_after_channel/total_original:.2%})")
     
-    # 创建柱状图显示总过滤结果
     stages = ["Original", "After Semantic", "After Spectral", "After Spatial"]
     counts = [total_original, total_after_semantic, total_after_spectral, total_after_channel]
     
     plt.figure(figsize=(10, 6))
     bars = plt.bar(stages, counts, color=['blue', 'green', 'orange', 'red'])
     
-    # 在柱子上添加数值标签
     for bar in bars:
         height = bar.get_height()
         plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
@@ -608,10 +578,8 @@ if results:
     plt.savefig(os.path.join(results_folder, "filtering_stages_summary.png"))
     plt.close()
     
-    # 计算每个类别保留的百分比并创建排序表
     stats_df.sort_values(by="Overall Ratio", ascending=False, inplace=True)
     
-    # 创建类别保留率的柱状图
     plt.figure(figsize=(12, 8))
     plt.bar(stats_df["Category"][:20], stats_df["Overall Ratio"][:20] * 100)
     plt.title("All Categories by Audio Retention Rate", fontsize=16)
@@ -623,74 +591,62 @@ if results:
     plt.savefig(os.path.join(results_folder, "top_categories_by_retention.png"))
     plt.close()
 
-# 为每个类别创建单独的过滤统计柱状图
 if results:
-    print("\n生成每个类别的过滤统计图...")
+    print("\nGenerate charts for each category...")
     
     for result in results:
         category_name = result["category"]
         category_results_folder = os.path.join(results_folder, category_name)
         
-        # 获取该类别每个阶段的文件数量
         orig_count = result["original_files"]
-        semantic_count = int(orig_count * 0.8)  # 语义过滤后(80%)
-        spectral_count = int(orig_count * 0.65)  # 频谱过滤后(65%)
-        spatial_count = result["final_files"]  # 空间过滤后(50%)
+        semantic_count = int(orig_count * 0.8)  # Semantic filtered(80%)
+        spectral_count = int(orig_count * 0.65)  # Spectral filtered(65%)
+        spatial_count = result["final_files"]  # Spatial filtered(50%)
         
-        # 创建柱状图
         stages = ["Original", "After Semantic", "After Spectral", "After Spatial"]
         counts = [orig_count, semantic_count, spectral_count, spatial_count]
         
         plt.figure(figsize=(10, 6))
         bars = plt.bar(stages, counts, color=['#3274A1', '#E1812C', '#3A923A', '#C03D3E'])
         
-        # 在柱子上添加数值标签
         for bar in bars:
             height = bar.get_height()
             plt.text(bar.get_x() + bar.get_width()/2., height + 0.5,
                     f'{int(height)}', ha='center', va='bottom', fontsize=14)
         
-        # 设置图表标题和标签
         plt.title(f"Category '{category_name}' Filtering Stages", fontsize=18)
         plt.ylabel("Number of Audio Files", fontsize=16)
-        plt.ylim(0, orig_count*1.1)  # 设置y轴上限，留出空间显示数值
+        plt.ylim(0, orig_count*1.1)  # Set y-axis limit, leave space to display values
         plt.xticks(rotation=15, fontsize=14)
         plt.tick_params(axis='y', which='major', labelsize=14)
         plt.tight_layout()
         
-        # 保存图表
         plt.savefig(os.path.join(category_results_folder, "filtering_stages_count.png"))
         plt.close()
     
-    # 创建所有类别音频数量对比图
     plt.figure(figsize=(15, 10))
     
-    # 准备数据
     categories = [r["category"] for r in results]
     original_counts = [r["original_files"] for r in results]
     final_counts = [r["final_files"] for r in results]
     
-    # 按原始文件数量排序
-    sort_indices = np.argsort(original_counts)[::-1]  # 降序排列
+    sort_indices = np.argsort(original_counts)[::-1]
     categories = [categories[i] for i in sort_indices]
     original_counts = [original_counts[i] for i in sort_indices]
     final_counts = [final_counts[i] for i in sort_indices]
     
-    # 取前20个类别(如果有)进行展示
     display_limit = min(20, len(categories))
     categories = categories[:display_limit]
     original_counts = original_counts[:display_limit]
     final_counts = final_counts[:display_limit]
     
-    # 创建柱状图
-    x = np.arange(len(categories))  # x轴位置
-    width = 0.35  # 柱宽度
+    x = np.arange(len(categories))
+    width = 0.35
     
     fig, ax = plt.subplots(figsize=(15, 8))
     rects1 = ax.bar(x - width/2, original_counts, width, label='Original Files', color='#3274A1')
     rects2 = ax.bar(x + width/2, final_counts, width, label='After Filtering', color='#C03D3E')
     
-    # 添加标题和标签
     ax.set_title('Original vs Filtered Audio Files', fontsize=23, fontweight='bold')
     ax.set_ylabel('Number of Files', fontsize=22)
     ax.tick_params(axis='y', labelsize=16)
@@ -702,23 +658,19 @@ if results:
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     
-    # 调整布局
     fig.tight_layout()
     
-    # 保存图表
     plt.savefig(os.path.join(results_folder, "category_files_comparison.png"))
     plt.savefig(os.path.join(results_folder, "category_files_comparison.pdf"))
     plt.close()
     
-    # 计算并可视化过滤保留率
+    # Compute and visualize filtering retention rates
     retention_rates = [r["final_files"]/r["original_files"]*100 for r in results]
     
-    # 按保留率排序
     sort_indices = np.argsort(retention_rates)[::-1]  # 降序排列
     sorted_categories = [categories[i] for i in sort_indices if i < len(categories)]
     sorted_rates = [retention_rates[i] for i in sort_indices if i < len(categories)]
     
-    # 取前20个展示
     display_limit = min(20, len(sorted_categories))
     sorted_categories = sorted_categories[:display_limit]
     sorted_rates = sorted_rates[:display_limit]
@@ -726,7 +678,6 @@ if results:
     plt.figure(figsize=(15, 8))
     bars = plt.bar(sorted_categories, sorted_rates, color='#3A923A')
     
-    # 在柱子上添加百分比标签
     for bar, rate in zip(bars, sorted_rates):
         plt.text(bar.get_x() + bar.get_width()/2., rate + 1,
                 f'{rate:.1f}%', ha='center', va='bottom', fontsize=12, rotation=0)
@@ -741,4 +692,4 @@ if results:
     plt.savefig(os.path.join(results_folder, "category_retention_rates.png"))
     plt.close()
     
-    print(f"已生成所有类别的过滤统计图，保存在各自的结果文件夹中")
+    print(f"Generated charts for all categories, saved in their result folders")
