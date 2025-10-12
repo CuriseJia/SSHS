@@ -10,19 +10,19 @@ import torch
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='CochAV heatmap 命中率评测')
-    parser.add_argument('--config', type=str, default='AudioCOCO/config6.json', help='配置JSON')
-    parser.add_argument('--condition', type=str, default='normal', help='无声条件')
-    parser.add_argument('--label', type=str, default='no', help='标签')
-    parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='图像根目录')
-    parser.add_argument('--coch_root', type=str, default='/data/data0/coch/', help='coch .npy 根目录')
-    parser.add_argument('--img_size', type=int, default=224, help='图像尺寸')
-    parser.add_argument('--batch_size', type=int, default=32, help='评测批大小')
-    parser.add_argument('--num_workers', type=int, default=4, help='dataloader 线程数')
-    parser.add_argument('--gpu', type=str, default='3', help='GPU id，例如 0 或 0,1')
-    parser.add_argument('--pretrained_path', type=str, required=True, help='cochAV 预训练权重路径 (.pth/.tar)')
-    parser.add_argument('--neg', action='store_true', help='启用Neg分支（需与训练一致）')
-    parser.add_argument('--tri_map', action='store_true', help='启用Trimap（需与训练一致）')
+    parser = argparse.ArgumentParser(description='CochAV heatmap hit rate evaluation')
+    parser.add_argument('--config', type=str, default='AudioCOCO/config6.json', help='Configuration JSON')
+    parser.add_argument('--condition', type=str, default='normal', help='Silent condition')
+    parser.add_argument('--label', type=str, default='no', help='Label')
+    parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='Image root directory')
+    parser.add_argument('--coch_root', type=str, default='/data/data0/coch/', help='coch .npy root directory')
+    parser.add_argument('--img_size', type=int, default=224, help='Image size')
+    parser.add_argument('--batch_size', type=int, default=32, help='Evaluation batch size')
+    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader thread count')
+    parser.add_argument('--gpu', type=str, default='3', help='GPU id, e.g. 0 or 0,1')
+    parser.add_argument('--pretrained_path', type=str, required=True, help='cochAV pretrained weight path (.pth/.tar)')
+    parser.add_argument('--neg', action='store_true', help='Enable Neg branch (must be consistent with training)')
+    parser.add_argument('--tri_map', action='store_true', help='Enable Trimap (must be consistent with training)')
     parser.add_argument('--epsilon', type=float, default=0.65)
     parser.add_argument('--epsilon2', type=float, default=0.4)
     return parser.parse_args()
@@ -40,11 +40,11 @@ def main() -> None:
     args = parse_args()
     device = setup_device(args.gpu)
 
-    # 延迟导入，避免不必要依赖
+    # Lazy import to avoid unnecessary dependencies
     from AudioCOCO.dataset import create_npy_dataloader
     from models.CochAV import CochAV
 
-    # 适配训练脚本中的参数形状
+    # Adapt parameter shape from training script
     class EvalArgs:
         def __init__(self, ns: argparse.Namespace):
             self.epsilon = ns.epsilon
@@ -77,7 +77,7 @@ def main() -> None:
 
     correct = 0
     total = 0
-    # 分size统计
+    # Statistics by size
     size_stats = {
         'size1': {'correct': 0, 'total': 0},
         'size2': {'correct': 0, 'total': 0},
@@ -102,30 +102,30 @@ def main() -> None:
             A, _, _, _, _ = model(image_t, audio_coch_t, eval_args, mode='val')
             heatmap = A[0, 0]  # [H, W]
 
-            # 最大值坐标
+            # Maximum value coordinates
             max_idx = torch.argmax(heatmap)
             h, w = heatmap.shape
             max_y = (max_idx // w).item()
             max_x = (max_idx % w).item()
 
-            # GT bbox (已为 224 尺度的 xyxy，long)
+            # GT bbox (already xyxy at 224 scale, long)
             bbox_xyxy = gt['bbox_xyxy_224'][0].to(device).long()
             xmin, ymin, xmax, ymax = [int(v.item()) for v in bbox_xyxy]
 
-            # heatmap 尺度 -> 224 尺度坐标对齐
-            # ResNet18 输出 14x14 特征图，需要映射到 224x224 图像
+            # heatmap scale -> 224 scale coordinate alignment
+            # ResNet18 outputs 14x14 feature map, need to map to 224x224 image
             target_size = args.img_size  # 224
             scale_x = target_size / float(w)  # 224/14 = 16
             scale_y = target_size / float(h)  # 224/14 = 16
             peak_x_224 = int(round((max_x + 0.5) * scale_x))
             peak_y_224 = int(round((max_y + 0.5) * scale_y))
 
-            # 命中判断：峰值是否落入 gt_box
+            # Hit judgment: whether peak falls into gt_box
             hit = (xmin <= peak_x_224 <= xmax) and (ymin <= peak_y_224 <= ymax)
             correct += int(hit)
             total += 1
 
-            # 从 config 条目获取 object_size 分组（兼容不同collate形态）
+            # Get object_size grouping from config entry (compatible with different collate forms)
             try:
                 meta = gt['meta']
                 obj_size = None
@@ -137,7 +137,7 @@ def main() -> None:
                         else:
                             obj_size = val
                 elif isinstance(meta, (list, tuple)) and len(meta) > 0:
-                    # 可能是 [entry_dict]
+                    # Might be [entry_dict]
                     first = meta[0]
                     if isinstance(first, dict):
                         obj_size = first.get('object_size', None)
@@ -150,7 +150,7 @@ def main() -> None:
 
     acc = correct / total if total > 0 else 0.0
     print(f'Total={total}  Correct={correct}  Acc={acc:.4f}')
-    # 分 size 打印
+    # Print by size
     for k in ['size1', 'size2', 'size3']:
         t = size_stats[k]['total']
         c = size_stats[k]['correct']

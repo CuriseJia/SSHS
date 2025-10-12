@@ -31,7 +31,7 @@ except ImportError:
 
 from sklearn.metrics import auc
 
-# 导入我们的模块
+# Import modules
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
@@ -48,35 +48,35 @@ class CochAVTrainer:
         self.device = self._setup_device()
         self.scaler = GradScaler() if args.use_amp else None
         
-        # 设置随机种子
+        # Set random seed
         self._set_seed(args.seed)
         
-        # 设置GPU设备
+        # Setup GPU device
         self._setup_gpu()
         
-        # 初始化模型
+        # Initialize model
         self.model = self._build_model()
         
-        # 初始化优化器和调度器
+        # Initialize optimizer and scheduler
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
         
-        # 初始化数据加载器
+        # Initialize data loaders
         self.train_loader, self.val_loader = self._build_dataloaders()
         
-        # 初始化损失函数
+        # Initialize loss function
         self.criterion = self._build_criterion()
         
-        # 训练状态
+        # Training state
         self.epoch = 0
         self.global_step = 0
         self.best_val_loss = float('inf')
         
-        # 日志和检查点
+        # Logging and checkpoints
         self._setup_logging()
         
     def _set_seed(self, seed: int):
-        """设置随机种子"""
+        """Set random seed"""
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         np.random.seed(seed)
@@ -84,93 +84,93 @@ class CochAVTrainer:
         torch.backends.cudnn.benchmark = False
         
     def _setup_device(self):
-        """设置计算设备"""
+        """Setup computing device"""
         if self.args.force_cpu or not torch.cuda.is_available():
             if self.args.force_cpu:
-                print("强制使用CPU训练")
+                print("Force using CPU for training")
             else:
-                print("CUDA不可用，使用CPU训练")
+                print("CUDA not available, using CPU for training")
             return torch.device('cpu')
         
-        # 如果指定了GPU设备
+        # If GPU devices are specified
         if hasattr(self.args, 'gpu_ids') and self.args.gpu_ids:
             if isinstance(self.args.gpu_ids, str):
                 gpu_ids = [int(x.strip()) for x in self.args.gpu_ids.split(',')]
             else:
                 gpu_ids = self.args.gpu_ids
             
-            # 检查GPU是否可用并测试GPU健康状态
+            # Check GPU availability and test GPU health status
             available_gpus = torch.cuda.device_count()
             valid_gpus = []
             
             for gpu_id in gpu_ids:
                 if 0 <= gpu_id < available_gpus:
                     try:
-                        # 测试GPU是否能正常分配内存
+                        # Test if GPU can allocate memory normally
                         torch.cuda.set_device(gpu_id)
                         test_tensor = torch.zeros(100, device=f'cuda:{gpu_id}')
-                        test_tensor = test_tensor + 1  # 简单运算测试
+                        test_tensor = test_tensor + 1  # Simple operation test
                         del test_tensor
                         torch.cuda.empty_cache()
                         valid_gpus.append(gpu_id)
-                        print(f"GPU {gpu_id}: 健康检查通过")
+                        print(f"GPU {gpu_id}: Health check passed")
                     except Exception as e:
-                        print(f"GPU {gpu_id}: 健康检查失败 - {e}")
-                        print(f"跳过GPU {gpu_id}")
+                        print(f"GPU {gpu_id}: Health check failed - {e}")
+                        print(f"Skipping GPU {gpu_id}")
                 else:
-                    print(f"GPU {gpu_id}: 索引超出范围（总共{available_gpus}个GPU）")
+                    print(f"GPU {gpu_id}: Index out of range (total {available_gpus} GPUs)")
             
             if not valid_gpus:
-                print(f"指定的GPU {gpu_ids} 均不可用，使用所有可用GPU")
+                print(f"All specified GPUs {gpu_ids} are unavailable, using all available GPUs")
                 valid_gpus = list(range(available_gpus))
             
             self.args.gpu_ids = valid_gpus
-            print(f"最终使用GPU: {valid_gpus}")
+            print(f"Finally using GPUs: {valid_gpus}")
             return torch.device(f'cuda:{valid_gpus[0]}')
         else:
-            # 使用所有可用GPU
+            # Use all available GPUs
             gpu_count = torch.cuda.device_count()
             if gpu_count > 1:
                 self.args.gpu_ids = list(range(gpu_count))
-                print(f"使用所有可用GPU: {self.args.gpu_ids}")
+                print(f"Using all available GPUs: {self.args.gpu_ids}")
             else:
                 self.args.gpu_ids = [0]
-                print("使用单GPU: 0")
+                print("Using single GPU: 0")
             return torch.device('cuda:0')
     
     def _setup_gpu(self):
-        """设置GPU环境"""
+        """Setup GPU environment"""
         if self.device.type == 'cuda':
-            # 设置CUDA设备
+            # Set CUDA device
             torch.cuda.set_device(self.device)
 
-            # 不在运行时修改 CUDA_VISIBLE_DEVICES，避免与 DataParallel 的 device_ids 产生映射冲突
+            # Do not modify CUDA_VISIBLE_DEVICES at runtime to avoid mapping conflicts with DataParallel device_ids
             if hasattr(self.args, 'gpu_ids') and len(self.args.gpu_ids) > 1:
-                print(f"多GPU训练，使用设备ID: {self.args.gpu_ids}")
+                print(f"Multi-GPU training, using device IDs: {self.args.gpu_ids}")
         
     def _build_model(self) -> nn.Module:
-        """构建CochAV模型"""
+        """Build CochAV model"""
         model = CochAV(self.args, pretrained_path=getattr(self.args, 'pretrained_path', None))
         model = model.to(self.device)
         
-        # 多GPU数据并行
+        # Multi-GPU data parallelism
         if self.device.type == 'cuda' and len(self.args.gpu_ids) > 1 and not self.args.distributed:
-            # 设置CUDA同步，避免多GPU死锁
+            # Set CUDA synchronization to avoid multi-GPU deadlock
             torch.backends.cudnn.benchmark = True
             torch.cuda.set_device(self.args.gpu_ids[0])
             model = nn.DataParallel(model, device_ids=self.args.gpu_ids)
-            print(f"使用 {len(self.args.gpu_ids)} 个GPU进行数据并行训练: {self.args.gpu_ids}")
-            print("多GPU模式：已禁用DataLoader多进程以避免死锁")
+            print(f"Using {len(self.args.gpu_ids)} GPUs for data parallel training: {self.args.gpu_ids}")
+            print("Multi-GPU mode: DataLoader multiprocessing disabled to avoid deadlock")
         elif self.device.type == 'cuda' and len(self.args.gpu_ids) == 1:
-            print(f"使用单GPU训练: GPU {self.args.gpu_ids[0]}")
+            print(f"Using single GPU training: GPU {self.args.gpu_ids[0]}")
         else:
-            print("使用CPU训练")
+            print("Using CPU training")
             
         return model
         
     def _build_optimizer(self) -> optim.Optimizer:
-        """构建优化器，针对小物体检测优化"""
-        # 分离参数：预训练层使用较小学习率，检测头使用更高学习率
+        """Build optimizer, optimized for small object detection"""
+        # Separate parameters: pretrained layers use smaller learning rate, detection head uses higher learning rate
         pretrained_params = []
         detection_params = []
         other_params = []
@@ -184,15 +184,15 @@ class CochAVTrainer:
                 other_params.append(param)
         
         optimizer = optim.AdamW([
-            {'params': pretrained_params, 'lr': self.args.lr * 0.1},  # 预训练层使用较小学习率
-            {'params': detection_params, 'lr': self.args.lr * self.args.detection_lr_mult},  # 检测头使用更高学习率，利于小物体
+            {'params': pretrained_params, 'lr': self.args.lr * 0.1},  # Pretrained layers use smaller learning rate
+            {'params': detection_params, 'lr': self.args.lr * self.args.detection_lr_mult},  # Detection head uses higher learning rate, beneficial for small objects
             {'params': other_params, 'lr': self.args.lr}
         ], weight_decay=self.args.weight_decay)
         
         return optimizer
         
     def _build_scheduler(self) -> Optional[Any]:
-        """构建学习率调度器"""
+        """Build learning rate scheduler"""
         if self.args.scheduler == 'cosine':
             return optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, T_max=self.args.epochs, eta_min=self.args.lr * 0.01
@@ -208,11 +208,11 @@ class CochAVTrainer:
         return None
         
     def _build_dataloaders(self) -> Tuple[DataLoader, DataLoader]:
-        """构建训练和验证数据加载器"""
-        # 获取cochleagram配置
+        """Build training and validation data loaders"""
+        # Get cochleagram configuration
         coch_config = get_config(self.args.coch_config)
         
-        # 训练集（使用预生成的 .npy cochleagram）
+        # Training set (using pre-generated .npy cochleagram)
         _train_loader, train_dataset = create_npy_dataloader(
             config_json_path=self.args.train_config,
             image_root=self.args.image_root,
@@ -224,7 +224,7 @@ class CochAVTrainer:
             train=True
         )
         
-        # 为小物体优化：计算每个样本的权重，小物体权重更高
+        # Optimize for small objects: calculate sample weights, higher weights for small objects
         self._compute_sample_weights(train_dataset)
         
         def _collate_with_pad(batch):
@@ -238,11 +238,11 @@ class CochAVTrainer:
                     c = F.pad(c, (0, pad_T))
                 padded.append(c)
             cochs = torch.stack(padded, dim=0)
-            # 负样本coch填充
+            # Negative sample coch padding
             max_T_neg = max(c.shape[-1] for c in neg_cochs)
             max_T_all = max(max_T, max_T_neg)
             if max_T_all != max_T:
-                # 需要把正样本也pad到新的最大长度
+                # Need to pad positive samples to new maximum length
                 extra = max_T_all - max_T
                 if extra > 0:
                     cochs = torch.nn.functional.pad(cochs, (0, extra))
@@ -266,34 +266,34 @@ class CochAVTrainer:
             }
             return images, cochs, gt, neg_images, neg_cochs
         
-        # 多GPU时减少num_workers避免进程通信死锁
+        # Reduce num_workers for multi-GPU to avoid process communication deadlock
         num_workers = 0 if len(self.args.gpu_ids) > 1 else self.args.num_workers
         
-        # 尝试使用加权采样器，如果失败则回退到普通随机采样
+        # Try to use weighted sampler, fallback to normal random sampling if failed
         try:
             train_loader = DataLoader(
                 train_dataset,
                 batch_size=self.args.batch_size,
-                sampler=self.sampler,  # 使用加权采样器，小物体采样概率更高
+                sampler=self.sampler,  # Use weighted sampler, higher sampling probability for small objects
                 num_workers=num_workers,
                 pin_memory=True,
                 collate_fn=_collate_with_pad,
-                persistent_workers=False,  # 避免worker进程持久化导致的死锁
+                persistent_workers=False,  # Avoid deadlock caused by persistent worker processes
             )
-            print("使用加权采样器进行训练")
+            print("Using weighted sampler for training")
         except Exception as e:
-            print(f"加权采样器失败，回退到普通随机采样: {e}")
+            print(f"Weighted sampler failed, fallback to normal random sampling: {e}")
             train_loader = DataLoader(
                 train_dataset,
                 batch_size=self.args.batch_size,
-                shuffle=True,  # 使用普通随机采样
+                shuffle=True,  # Use normal random sampling
                 num_workers=num_workers,
                 pin_memory=True,
                 collate_fn=_collate_with_pad,
                 persistent_workers=False,
             )
         
-        # 验证集（使用预生成的 .npy cochleagram）
+        # Validation set (using pre-generated .npy cochleagram)
         _val_loader, val_dataset = create_npy_dataloader(
             config_json_path=self.args.val_config,
             image_root=self.args.image_root,
@@ -308,7 +308,7 @@ class CochAVTrainer:
             val_dataset,
             batch_size=self.args.batch_size,
             shuffle=False,
-            num_workers=num_workers,  # 使用相同的worker设置
+            num_workers=num_workers,  # Use same worker settings
             pin_memory=True,
             collate_fn=_collate_with_pad,
             persistent_workers=False,
@@ -317,45 +317,45 @@ class CochAVTrainer:
         return train_loader, val_loader
     
     def _compute_sample_weights(self, dataset):
-        """计算样本权重，小物体权重更高"""
+        """Calculate sample weights, higher weights for small objects"""
         self.sample_weights = []
         areas = []
         
         for i in range(len(dataset)):
             entry = dataset.entries[i]
-            # 获取GT bbox面积
+            # Get GT bbox area
             if 'gt_box' in entry:
                 bbox = entry['gt_box']
                 if isinstance(bbox, list) and len(bbox) == 4:
-                    # bbox格式为 [x, y, w, h]
-                    area = max(bbox[2] * bbox[3], 1.0)  # 确保面积至少为1
+                    # bbox format is [x, y, w, h]
+                    area = max(bbox[2] * bbox[3], 1.0)  # Ensure area is at least 1
                 else:
-                    area = 1.0  # 默认面积
+                    area = 1.0  # Default area
             else:
                 area = 1.0
             
             areas.append(area)
         
-        # 计算面积统计信息
+        # Calculate area statistics
         areas = np.array(areas)
         min_area = np.min(areas)
         max_area = np.max(areas)
         
-        # 使用更稳定的权重计算方式
+        # Use more stable weight calculation method
         for area in areas:
-            # 归一化面积到 [0, 1]
+            # Normalize area to [0, 1]
             if max_area > min_area:
                 normalized_area = (area - min_area) / (max_area - min_area)
             else:
-                normalized_area = 0.5  # 如果所有面积相同，使用中等权重
+                normalized_area = 0.5  # If all areas are the same, use medium weight
             
-            # 面积越小权重越高，使用平方根函数平滑权重分布
+            # Smaller area has higher weight, use square root function to smooth weight distribution
             weight = 1.0 + self.args.small_obj_weight * np.sqrt(1.0 - normalized_area)
             self.sample_weights.append(weight)
         
-        # 创建加权采样器
+        # Create weighted sampler
         self.sample_weights = torch.tensor(self.sample_weights, dtype=torch.float)
-        # 确保所有权重都是正数且合理范围
+        # Ensure all weights are positive and in reasonable range
         self.sample_weights = torch.clamp(self.sample_weights, min=0.1, max=10.0)
         
         self.sampler = torch.utils.data.WeightedRandomSampler(
@@ -365,11 +365,11 @@ class CochAVTrainer:
         )
         
     def _build_criterion(self) -> nn.Module:
-        """构建损失函数"""
+        """Build loss function"""
         return nn.CrossEntropyLoss()
         
     def _setup_logging(self):
-        """设置日志和wandb"""
+        """Setup logging and wandb"""
         if self.args.use_wandb and WANDB_AVAILABLE:
             wandb.init(
                 project="CochAV-AudioCOCO",
@@ -380,11 +380,11 @@ class CochAVTrainer:
             print("Warning: wandb requested but not available")
             
     def train_epoch(self) -> Dict[str, float]:
-        """训练一个epoch"""
+        """Train one epoch"""
         self.model.train()
         total_loss = 0.0
         num_batches = len(self.train_loader)
-        batch_losses = []  # 记录每个batch的loss
+        batch_losses = []  # Record loss for each batch
         
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}")
         
@@ -394,22 +394,22 @@ class CochAVTrainer:
             neg_images = neg_images.to(self.device, non_blocking=True)
             neg_coch = neg_coch.to(self.device, non_blocking=True)
             
-            # 混合精度训练
+            # Mixed precision training
             if self.scaler:
                 with autocast():
                     A, logits, Pos, Neg, pred_bbox = self.model(images, audio_coch, self.args, mode='train')
-                    # 负图像对
+                    # Negative image pairs
                     _, logits_img_neg, _, _, _ = self.model(neg_images, audio_coch, self.args, mode='train')
-                    # 负音频对
+                    # Negative audio pairs
                     _, logits_aud_neg, _, _, _ = self.model(images, neg_coch, self.args, mode='train')
                     loss, loss_img, loss_aud, loss_iou = self._compute_full_loss(logits, logits_img_neg, logits_aud_neg, pred_bbox, gt)
                     
-                # 梯度累积
+                # Gradient accumulation
                 loss = loss / self.args.accumulation_steps
                 self.scaler.scale(loss).backward()
                 
                 if (batch_idx + 1) % self.args.accumulation_steps == 0:
-                    # 梯度裁剪
+                    # Gradient clipping
                     self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
                     
@@ -432,16 +432,16 @@ class CochAVTrainer:
                     self.optimizer.zero_grad()
                     self.global_step += 1
             
-            # 记录原始总损失（注意loss已经被除以accumulation_steps）
+            # Record original total loss (note that loss has been divided by accumulation_steps)
             batch_loss = loss.item() * self.args.accumulation_steps
             total_loss += batch_loss
-            batch_losses.append(batch_loss)  # 记录当前batch的loss
+            batch_losses.append(batch_loss)  # Record current batch loss
             
-            # 调试输出：前10个batch打印IoU细节与A分布，特别关注小物体
+            # Debug output: print IoU details and A distribution for first 10 batches, especially focus on small objects
             if self.epoch == 0 and batch_idx < 10:
                 with torch.no_grad():
                     img_size_dbg = self.args.img_size
-                    # 将中心点+宽高转像素xyxy（与损失一致）
+                    # Convert center point + width/height to pixel xyxy (consistent with loss)
                     cx = pred_bbox[:, 0]
                     cy = pred_bbox[:, 1]
                     w = pred_bbox[:, 2].clamp(min=0.05)
@@ -458,9 +458,9 @@ class CochAVTrainer:
                     gt_xyxy_dbg = gt['bbox_xyxy_224'].to(pred_xyxy_dbg.device).float()
                     iou_vals = self._bbox_iou(pred_xyxy_dbg, gt_xyxy_dbg)
                     
-                    # 计算GT面积，识别小物体
+                    # Calculate GT area, identify small objects
                     gt_areas = (gt_xyxy_dbg[:, 2] - gt_xyxy_dbg[:, 0]) * (gt_xyxy_dbg[:, 3] - gt_xyxy_dbg[:, 1])
-                    small_obj_mask = gt_areas < (img_size_dbg * img_size_dbg * 0.01)  # 面积小于1%的为小物体
+                    small_obj_mask = gt_areas < (img_size_dbg * img_size_dbg * 0.01)  # Objects with area less than 1% are small objects
                     small_obj_iou = iou_vals[small_obj_mask].mean() if small_obj_mask.any() else torch.tensor(0.0)
                     
                     a_mean = A.mean().item() if isinstance(A, torch.Tensor) else float('nan')
@@ -470,7 +470,7 @@ class CochAVTrainer:
                           f"pred0={pred_xyxy_dbg[0].tolist()} gt0={gt_xyxy_dbg[0].tolist()} "
                           f"A_mean={a_mean:.4f} A_std={a_std:.4f}")
 
-            # 更新进度条，显示当前loss和平均loss
+            # Update progress bar, show current loss and average loss
             avg_loss = total_loss / (batch_idx + 1)
             progress_bar.set_postfix({
                 'loss': f'{batch_loss:.4f}',
@@ -482,9 +482,9 @@ class CochAVTrainer:
                 'lr': f'{self.optimizer.param_groups[0]["lr"]:.6f}'
             })
             
-            # 日志记录 - 每个batch都记录loss变化
+            # Logging - record loss changes for each batch
             if self.global_step % self.args.log_interval == 0:
-                # 计算最近几个batch的loss统计
+                # Calculate loss statistics for recent batches
                 recent_losses = batch_losses[-10:] if len(batch_losses) >= 10 else batch_losses
                 loss_std = np.std(recent_losses) if len(recent_losses) > 1 else 0.0
                 loss_trend = np.mean(np.diff(recent_losses)) if len(recent_losses) > 1 else 0.0
@@ -502,7 +502,7 @@ class CochAVTrainer:
                     'train/batch': batch_idx
                 })
         
-        # 计算loss统计信息
+        # Calculate loss statistics
         avg_loss = total_loss / num_batches
         loss_std = np.std(batch_losses) if len(batch_losses) > 1 else 0.0
         min_loss = min(batch_losses) if batch_losses else 0.0
@@ -517,12 +517,12 @@ class CochAVTrainer:
         }
         
     def validate(self) -> Dict[str, float]:
-        """验证模型"""
+        """Validate model"""
         self.model.eval()
         total_loss = 0.0
         total_accuracy = 0.0
         num_samples = 0
-        val_losses = []  # 记录每个验证batch的loss
+        val_losses = []  # Record loss for each validation batch
         
         with torch.no_grad():
             for batch_idx, (images, audio_coch, gt, neg_images, neg_coch) in enumerate(tqdm(self.val_loader, desc="Validation")):
@@ -547,9 +547,9 @@ class CochAVTrainer:
                 total_loss += batch_loss
                 val_losses.append(batch_loss)
                 
-                # 计算准确率（简化版本）
+                # Calculate accuracy (simplified version)
                 predictions = torch.argmax(logits, dim=1)
-                # 这里需要根据实际的标签格式调整
+                # This needs to be adjusted according to actual label format
                 accuracy = self._compute_accuracy(predictions, gt)
                 total_accuracy += accuracy
                 num_samples += images.size(0)
@@ -571,36 +571,36 @@ class CochAVTrainer:
         
     def _compute_full_loss(self, logits_pos: torch.Tensor, logits_img_neg: torch.Tensor, logits_aud_neg: torch.Tensor,
                            pred_norm_bbox: torch.Tensor, gt: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """组合对比损失与IoU损失，针对小物体优化。
-        - 对比损失：推动正样本分数高于错误图像/错误音频。
-        - IoU损失：基于预测bbox与真值bbox，小物体权重更高。
+        """Combine contrastive loss with IoU loss, optimized for small objects.
+        - Contrastive loss: push positive sample scores higher than wrong images/wrong audio.
+        - IoU loss: based on predicted bbox and ground truth bbox, higher weight for small objects.
         """
-        # 使用平滑的对比损失：温和的margin loss + 梯度裁剪
+        # Use smooth contrastive loss: gentle margin loss + gradient clipping
         sim_pos = logits_pos.mean(dim=1)
         sim_img_neg = logits_img_neg.mean(dim=1)
         sim_aud_neg = logits_aud_neg.mean(dim=1)
         
-        # 平滑的margin loss，避免梯度爆炸
+        # Smooth margin loss to avoid gradient explosion
         margin = 0.5
         loss_img_raw = torch.clamp(margin - sim_pos + sim_img_neg, min=0)
         loss_aud_raw = torch.clamp(margin - sim_pos + sim_aud_neg, min=0)
         
-        # 使用平方损失平滑化，并限制最大值
+        # Use squared loss smoothing and limit maximum value
         loss_img = torch.clamp(loss_img_raw.pow(2), max=4.0).mean()
         loss_aud = torch.clamp(loss_aud_raw.pow(2), max=4.0).mean()
 
-        # IoU损失（将预测解释为中心点+宽高，避免退化为零面积）
+        # IoU loss (interpret prediction as center point + width/height to avoid degenerating to zero area)
         img_size = self.args.img_size
-        # 预测为 [cx, cy, w, h]，范围(0,1)
+        # Prediction is [cx, cy, w, h], range (0,1)
         cx = pred_norm_bbox[:, 0]
         cy = pred_norm_bbox[:, 1]
         w = pred_norm_bbox[:, 2]
         h = pred_norm_bbox[:, 3]
-        # 保证宽高有下限，避免零面积
+        # Ensure width and height have lower bound to avoid zero area
         min_frac = 0.05
         w = torch.clamp(w, min=min_frac)
         h = torch.clamp(h, min=min_frac)
-        # 转为像素坐标
+        # Convert to pixel coordinates
         half_w = 0.5 * w * img_size
         half_h = 0.5 * h * img_size
         cx_pix = cx * img_size
@@ -613,25 +613,25 @@ class CochAVTrainer:
         gt_xyxy = gt['bbox_xyxy_224'].to(pred_norm_bbox.device).float()
         iou = self._bbox_iou(pred_xyxy, gt_xyxy)
         
-        # 计算GT bbox面积，用于小物体权重调整
+        # Calculate GT bbox area for small object weight adjustment
         gt_areas = (gt_xyxy[:, 2] - gt_xyxy[:, 0]) * (gt_xyxy[:, 3] - gt_xyxy[:, 1])
-        # 归一化面积到 [0, 1]，面积越小权重越高
+        # Normalize area to [0, 1], smaller area has higher weight
         max_area = img_size * img_size
         normalized_areas = gt_areas / max_area
-        # 小物体权重：面积越小，权重越高（1.0 到 1+small_obj_weight 之间）
+        # Small object weight: smaller area has higher weight (between 1.0 and 1+small_obj_weight)
         small_obj_weights = 1.0 + self.args.small_obj_weight * (1.0 - normalized_areas)
         
-        # 加权IoU损失
+        # Weighted IoU loss
         weighted_iou_loss = (1.0 - iou) * small_obj_weights
         loss_iou = weighted_iou_loss.mean()
 
-        # 权重可调：增大IoU损失权重，促进定位学习，小物体权重更高
-        total_loss = loss_img + loss_aud + 5.0 * loss_iou  # IoU损失权重5倍
+        # Adjustable weight: increase IoU loss weight to promote localization learning, higher weight for small objects
+        total_loss = loss_img + loss_aud + 5.0 * loss_iou  # IoU loss weight 5x
         return total_loss, loss_img, loss_aud, loss_iou
 
     @staticmethod
     def _bbox_iou(box1: torch.Tensor, box2: torch.Tensor) -> torch.Tensor:
-        """计算IoU，输入[B,4] xyxy。"""
+        """Calculate IoU, input [B,4] xyxy."""
         inter_xmin = torch.maximum(box1[:, 0], box2[:, 0])
         inter_ymin = torch.maximum(box1[:, 1], box2[:, 1])
         inter_xmax = torch.minimum(box1[:, 2], box2[:, 2])
@@ -775,7 +775,7 @@ def get_args():
     # 训练相关
     parser.add_argument('--epochs', type=int, default=10,
                        help='训练轮数')
-    parser.add_argument('--batch_size', type=int, default=2,
+    parser.add_argument('--batch_size', type=int, default=4,
                        help='批次大小')
     parser.add_argument('--lr', type=float, default=1e-5,
                        help='学习率')
