@@ -20,7 +20,7 @@ In this paper, we build the first framework to benchmark current Audio-Visual mo
 ## 🚀 Quick Start
 ### Setup
 
-#### Setup dataset environment
+#### Software Installation (For human experiment and AudioCOCO dataset generation)
 ```shell
 Unity 6000.10f1
 MATLAB 2022b
@@ -30,10 +30,11 @@ MATLAB 2022b
 ```shell
 conda create -n SSHS python=3.9
 conda activate SSHS
-pip install -r requirements.txt
 git submodule init
 git submodule update
-git submodule update --init --recursive
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+# git submodule update --init --recursive
 ```
 
 ### Dataset Preparation

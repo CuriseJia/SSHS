@@ -6,6 +6,14 @@ from pycocotools import mask as maskUtils
 import os
 from collections import defaultdict
 
+def format_image_filename(annotation_file_path: str, img_id: int) -> str:
+    """Format image filename based on whether annotation file is train or val."""
+    prefix = "COCO_val2014_"
+    lower_path = (annotation_file_path or "").lower()
+    if "train2014" in lower_path:
+        prefix = "COCO_train2014_"
+    return f"{prefix}{img_id:012d}.jpg"
+
 def load_categories(category_file):
     """Load category file"""
     with open(category_file, 'r') as f:
@@ -176,8 +184,8 @@ def filter_coco_instances(coco_annotation_file, category_file, output_file):
         center_point = calculate_center_point(resized_gt_box)
         
         # Create instance record
-        # Convert numeric ID to COCO format filename
-        image_filename = f"COCO_val2014_{img_id:012d}.jpg"
+        # Convert numeric ID to COCO format filename (auto train/val)
+        image_filename = format_image_filename(coco_annotation_file, img_id)
         
         instance_record = {
             "image_id": image_filename,
@@ -212,12 +220,89 @@ def filter_coco_instances(coco_annotation_file, category_file, output_file):
     
     return filtered_instances
 
+def filter_coco_multi_instances(coco_annotation_file, category_file, output_file_multi):
+    """
+    Filter images where there are multiple instances of the same target category in one image.
+    - For instances of categories listed in category.txt with count >= 2 in an image
+    - Compute object_size by mask area ratio (0-5%: size1, 5-15%: size2, 15-25%: size3; >25% also treated as size3)
+    - Resize geometry to 1920x1080 (only scale boxes), compute center point
+    - Keep only 2 instance records per image (largest mask ratio)
+    """
+    coco = COCO(coco_annotation_file)
+    target_categories = load_categories(category_file)
+    cat_ids = coco.getCatIds(catNms=target_categories)
+
+    img_ids = coco.getImgIds()
+    results = []
+
+    for img_id in img_ids:
+        img_info = coco.loadImgs(img_id)[0]
+        image_width = img_info['width']
+        image_height = img_info['height']
+
+        ann_ids = coco.getAnnIds(imgIds=img_id, catIds=cat_ids)
+        anns = coco.loadAnns(ann_ids)
+        if not anns:
+            continue
+
+        # Count per-category instances in this image among target categories
+        per_cat_anns = defaultdict(list)
+        for ann in anns:
+            cat_name = coco.loadCats(ann['category_id'])[0]['name']
+            if cat_name in target_categories:
+                per_cat_anns[cat_name].append(ann)
+
+        # Collect candidate instance records for this image
+        image_candidates = []
+        for cat_name, cat_anns in per_cat_anns.items():
+            if len(cat_anns) < 2:
+                continue
+            for ann in cat_anns:
+                mask = coco.annToMask(ann)
+                area_ratio = calculate_mask_area_ratio(mask, image_width, image_height)
+                object_size = get_object_size(area_ratio)
+                x, y, w, h = ann['bbox']
+                resized_gt_box = [
+                    int(x * 1920 / image_width),
+                    int(y * 1080 / image_height),
+                    int(w * 1920 / image_width),
+                    int(h * 1080 / image_height),
+                ]
+                center_point = calculate_center_point(resized_gt_box)
+                image_filename = format_image_filename(coco_annotation_file, img_id)
+                image_candidates.append({
+                    "image_id": image_filename,
+                    "category": cat_name,
+                    "object_size": object_size,
+                    "gt_box": resized_gt_box,
+                    "point": center_point,
+                    "_area_ratio": area_ratio,
+                })
+
+        if not image_candidates:
+            continue
+
+        # Keep only top-2 by area ratio per image
+        image_candidates.sort(key=lambda d: d["_area_ratio"], reverse=True)
+        top2 = image_candidates[:2]
+        for rec in top2:
+            rec.pop("_area_ratio", None)
+        results.extend(top2)
+
+    # Save multi-object results
+    with open(output_file_multi, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    print(f"\nMulti-object filtering completed! Saved {len(results)} instances to: {output_file_multi}")
+    return results
+
 def main():
     """Main function"""
     # File paths
-    coco_annotation_file = "/home/yanhao/SSHS/AudioCOCO/instances_val2014.json"  # Please modify according to actual path
+    coco_annotation_file = "/home/yanhao/SSHS/AudioCOCO/instances_val2014.json"
     category_file = "/home/yanhao/SSHS/AudioCOCO/category.txt"
-    output_file = "/home/yanhao/SSHS/AudioCOCO/filtered_instances.json"
+    output_file = "/home/yanhao/SSHS/AudioCOCO/filtered_val.json"
+    output_file_multi = "/home/yanhao/SSHS/AudioCOCO/filtered_val_multi.json"
     
     # Check if files exist
     if not os.path.exists(coco_annotation_file):
@@ -237,6 +322,10 @@ def main():
         filtered_instances = filter_coco_instances(coco_annotation_file, category_file, output_file)
         print(f"\nFiltering results saved to: {output_file}")
         print(f"Total filtered {len(filtered_instances)} instances that meet criteria")
+
+        # Multi-object filtering
+        filtered_multi = filter_coco_multi_instances(coco_annotation_file, category_file, output_file_multi)
+        print(f"Total filtered multi-object instances: {len(filtered_multi)}")
     except Exception as e:
         print(f"Error occurred during processing: {e}")
         import traceback

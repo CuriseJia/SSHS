@@ -265,10 +265,10 @@ def map_size_format(instances):
     return instances
 
 def main():
-    output_dir = "/home/yanhao/AudioCOCO/filtered_output_train"
+    output_dir = "/home/yanhao/SSHS/AudioCOCO/"
     os.makedirs(output_dir, exist_ok=True)
     
-    single_object_path = "/home/yanhao/AudioCOCO/output/single_object_instances.json"
+    single_object_path = "/home/yanhao/SSHS/AudioCOCO/filtered_val.json"
     single_objects = load_json(single_object_path)
     print(f"\nProcessing single object instances: {len(single_objects)} total")
     
@@ -278,7 +278,7 @@ def main():
     
     final_single = analyze_spatial_distribution(filtered_single)
     
-    filtered_single_path = os.path.join(output_dir, "filtered_single_object_instances.json")
+    filtered_single_path = os.path.join(output_dir, "final_val.json")
     with open(filtered_single_path, 'w') as f:
         json.dump(final_single, f, indent=2)
     print(f"Filtered single objects saved: {len(final_single)} instances")
@@ -294,7 +294,7 @@ def main():
     stats_path = os.path.join(output_dir, "single_object_statistics.png")
     plot_category_statistics(final_single, "Single", stats_path)
     
-    multi_object_path = "/home/yanhao/AudioCOCO/output/multi_object_instances.json"
+    multi_object_path = "/home/yanhao/SSHS/AudioCOCO/filtered_val_multi.json"
     multi_objects = load_json(multi_object_path)
     print(f"\nProcessing multi object instances: {len(multi_objects)} total")
     
@@ -303,7 +303,7 @@ def main():
     filtered_multi = filter_by_category_limit(multi_objects)
     final_multi = analyze_spatial_distribution(filtered_multi)
     
-    filtered_multi_path = os.path.join(output_dir, "filtered_multi_object_instances.json")
+    filtered_multi_path = os.path.join(output_dir, "final_val_multi.json")
     with open(filtered_multi_path, 'w') as f:
         json.dump(final_multi, f, indent=2)
     print(f"Filtered multi objects saved: {len(final_multi)} instances")
