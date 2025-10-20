@@ -4,9 +4,9 @@ bird
 person
 horse
 train
-motocycle
+motorcycle
 elephant
 boat
-plane
+airplane
 cow
 keyboard

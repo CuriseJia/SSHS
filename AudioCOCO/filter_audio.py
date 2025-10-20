@@ -32,11 +32,40 @@ with open(summary_csv_path, 'w', newline='') as csvfile:
 def compute_channel_consistency(audio_file):
     if audio_file.ndim < 2:
         return None
+    
     left_channel = audio_file[0]
     right_channel = audio_file[1]
-    correlation_matrix = np.corrcoef(left_channel, right_channel)
-    correlation = correlation_matrix[0, 1]
-    return correlation
+    
+    # 检查声道数据是否有效
+    if len(left_channel) == 0 or len(right_channel) == 0:
+        return None
+    
+    # 检查是否有NaN或无穷大值
+    if np.any(np.isnan(left_channel)) or np.any(np.isnan(right_channel)):
+        return None
+    
+    if np.any(np.isinf(left_channel)) or np.any(np.isinf(right_channel)):
+        return None
+    
+    # 检查声道是否完全相同（会导致相关性为NaN）
+    if np.array_equal(left_channel, right_channel):
+        return 1.0  # 完全相同，相关性为1
+    
+    # 检查声道是否都是常数（会导致相关性为NaN）
+    if np.std(left_channel) == 0 or np.std(right_channel) == 0:
+        return 0.0  # 常数信号，相关性为0
+    
+    try:
+        correlation_matrix = np.corrcoef(left_channel, right_channel)
+        correlation = correlation_matrix[0, 1]
+        
+        # 检查相关性是否为NaN
+        if np.isnan(correlation):
+            return 0.0  # 如果相关性为NaN，返回0
+        
+        return correlation
+    except:
+        return 0.0  # 如果计算失败，返回0
 
 def compute_spectral_consistency(audio_file, n_fft=2048, hop_length=512):
     stft = librosa.stft(audio_file, n_fft=n_fft, hop_length=hop_length)
@@ -75,18 +104,36 @@ def process_category_folder(category_folder):
             y, sr = librosa.load(file, sr=16000, mono=False)
             y_mono = librosa.to_mono(y)  # 转换为单声道
             
+            # 检查音频数据是否有效
+            if len(y_mono) == 0 or np.all(y_mono == 0):
+                print(f"Skipping empty or silent file: {os.path.basename(file)}")
+                continue
+            
             se_emb = compute_semantic_consistency(y_mono, processor, model)
             sp_emb = compute_spectral_consistency(y_mono)
             similarity = compute_channel_consistency(y)
+            
+            # 检查嵌入是否有效
+            if np.any(np.isnan(se_emb)) or np.any(np.isinf(se_emb)):
+                print(f"Skipping file with invalid semantic embedding: {os.path.basename(file)}")
+                continue
+                
+            if np.any(np.isnan(sp_emb)) or np.any(np.isinf(sp_emb)):
+                print(f"Skipping file with invalid spectral embedding: {os.path.basename(file)}")
+                continue
             
             semantic_embeddings.append(se_emb)
             spectral_embeddings.append(sp_emb)
             valid_files.append(file)
             
-            if similarity is not None:
+            if similarity is not None and not np.isnan(similarity):
                 spitial_embeddings.append(similarity)
+            else:
+                # 如果空间一致性计算失败，使用默认值0
+                spitial_embeddings.append(0.0)
+                
         except Exception as e:
-            print(f"Error processing file {file}: {str(e)}")
+            print(f"Error processing file {os.path.basename(file)}: {str(e)}")
             continue
     
     if len(valid_files) < 4:
@@ -97,6 +144,17 @@ def process_category_folder(category_folder):
     semantic_embeddings = np.array(semantic_embeddings)
     spectral_embeddings = np.array(spectral_embeddings)
     spitial_embeddings = np.array(spitial_embeddings)
+    
+    # 添加调试信息
+    print(f"Valid files processed: {len(valid_files)}")
+    print(f"Spatial embeddings collected: {len(spitial_embeddings)}")
+    if len(spitial_embeddings) > 0:
+        nan_count = np.sum(np.isnan(spitial_embeddings))
+        print(f"Spatial embeddings with NaN: {nan_count}/{len(spitial_embeddings)}")
+        if nan_count > 0:
+            print(f"NaN ratio in spatial embeddings: {nan_count/len(spitial_embeddings):.2%}")
+    else:
+        print("Warning: No spatial embeddings collected!")
     
     # Compute similarity matrix
     semantic_matrix = cosine_similarity(semantic_embeddings)
@@ -120,7 +178,7 @@ def process_category_folder(category_folder):
     
     semantic_score = semantic_sum / count if count > 0 else 0
     spectral_score = spectral_sum / count if count > 0 else 0
-    spitial_score = np.mean(spitial_embeddings) if len(spitial_embeddings) > 0 else 0
+    spitial_score = np.nanmean(spitial_embeddings) if len(spitial_embeddings) > 0 else 0
     
     print(f"Original Spatial Consistency: {spitial_score:.4f}")
     print(f"Original Spectral Consistency: {spectral_score:.4f}")
@@ -198,7 +256,7 @@ def process_category_folder(category_folder):
         
         avg_semantic_80 = semantic_sum_80 / count_80 if count_80 > 0 else 0
         avg_spectral_80 = spectral_sum_80 / count_80 if count_80 > 0 else 0
-        avg_spitial_80 = np.mean(spitial_scores_80) if len(spitial_scores_80) > 0 else 0
+        avg_spitial_80 = np.nanmean(spitial_scores_80) if len(spitial_scores_80) > 0 else 0
         
         print(f"After semantic filtering - Average spatial consistency: {avg_spitial_80:.4f}")
         print(f"After semantic filtering - Average spectral consistency: {avg_spectral_80:.4f}")
@@ -272,7 +330,7 @@ def process_category_folder(category_folder):
             
             avg_semantic_65 = semantic_sum_65 / count_65 if count_65 > 0 else 0
             avg_spectral_65 = spectral_sum_65 / count_65 if count_65 > 0 else 0
-            avg_spitial_65 = np.mean(spitial_scores_65) if len(spitial_scores_65) > 0 else 0
+            avg_spitial_65 = np.nanmean(spitial_scores_65) if len(spitial_scores_65) > 0 else 0
             
             print(f"After spectral filtering - Average spatial consistency: {avg_spitial_65:.4f}")
             print(f"After spectral filtering - Average spectral consistency: {avg_spectral_65:.4f}")
@@ -334,7 +392,7 @@ def process_category_folder(category_folder):
                     
                     avg_semantic_50 = semantic_sum_50 / count_50 if count_50 > 0 else 0
                     avg_spectral_50 = spectral_sum_50 / count_50 if count_50 > 0 else 0
-                    avg_spitial_50 = np.mean(spitial_scores_50) if len(spitial_scores_50) > 0 else 0
+                    avg_spitial_50 = np.nanmean(spitial_scores_50) if len(spitial_scores_50) > 0 else 0
                     
                     print(f"After spatial filtering - Average spatial consistency: {avg_spitial_50:.4f}")
                     print(f"After spatial filtering - Average spectral consistency: {avg_spectral_50:.4f}")

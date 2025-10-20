@@ -397,7 +397,7 @@ class CochleagramPreprocessor:
             plt.close()
     
     def process_single_file(self, input_path: str, output_path: str, 
-                           save_format: str = 'npy') -> Dict[str, Any]:
+                           save_format: str = 'npy', skip_existing: bool = False) -> Dict[str, Any]:
         """
         Process single audio file
         
@@ -405,11 +405,23 @@ class CochleagramPreprocessor:
             input_path: Input audio file path
             output_path: Output file path
             save_format: Save format
+            skip_existing: Whether to skip processing if output file already exists
             
         Returns:
             Processing result information
         """
         try:
+            # Check if output file already exists
+            if skip_existing and os.path.exists(output_path):
+                self.logger.info(f"Output file already exists, skipping: {output_path}")
+                return {
+                    'success': True,
+                    'input_path': input_path,
+                    'output_path': output_path,
+                    'skipped': True,
+                    'message': 'File already exists, skipped processing'
+                }
+            
             # Load audio
             signal, sr = self.load_audio(input_path)
             
@@ -426,7 +438,8 @@ class CochleagramPreprocessor:
                 'signal_shape': signal.shape,
                 'cochleagram_shape': cochleagram.shape,
                 'sr': sr,
-                'duration': len(signal) / sr
+                'duration': len(signal) / sr,
+                'skipped': False
             }
             
             self.logger.info(f"Processing successful: {input_path}")
@@ -441,7 +454,8 @@ class CochleagramPreprocessor:
             }
     
     def process_batch(self, input_dir: str, output_dir: str, 
-                     file_pattern: str = '*.wav', save_format: str = 'npy') -> Dict[str, Any]:
+                     file_pattern: str = '*.wav', save_format: str = 'npy', 
+                     skip_existing: bool = False) -> Dict[str, Any]:
         """
         Batch process audio files
         
@@ -450,6 +464,7 @@ class CochleagramPreprocessor:
             output_dir: Output directory
             file_pattern: File matching pattern
             save_format: Save format
+            skip_existing: Whether to skip processing if output file already exists
             
         Returns:
             Batch processing result
@@ -462,13 +477,14 @@ class CochleagramPreprocessor:
         
         if not audio_files:
             self.logger.warning(f"No matching files found in {input_dir} for {file_pattern}")
-            return {'total': 0, 'success': 0, 'failed': 0, 'results': []}
+            return {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0, 'results': []}
         
         self.logger.info(f"Found {len(audio_files)} audio files")
         
         results = []
         success_count = 0
         failed_count = 0
+        skipped_count = 0
         
         for audio_file in audio_files:
             # Build output file path
@@ -476,11 +492,14 @@ class CochleagramPreprocessor:
             output_file = output_path / relative_path.with_suffix(f'.{save_format}')
             
             # Process file
-            result = self.process_single_file(str(audio_file), str(output_file), save_format)
+            result = self.process_single_file(str(audio_file), str(output_file), save_format, skip_existing)
             results.append(result)
             
             if result['success']:
-                success_count += 1
+                if result.get('skipped', False):
+                    skipped_count += 1
+                else:
+                    success_count += 1
             else:
                 failed_count += 1
         
@@ -488,10 +507,11 @@ class CochleagramPreprocessor:
             'total': len(audio_files),
             'success': success_count,
             'failed': failed_count,
+            'skipped': skipped_count,
             'results': results
         }
         
-        self.logger.info(f"Batch processing completed: Total {len(audio_files)}, Success {success_count}, Failed {failed_count}")
+        self.logger.info(f"Batch processing completed: Total {len(audio_files)}, Success {success_count}, Failed {failed_count}, Skipped {skipped_count}")
         return batch_result
 
 
@@ -519,6 +539,8 @@ def main():
                        help='Output format (default: npy)')
     parser.add_argument('--batch', action='store_true', help='Batch processing mode')
     parser.add_argument('--pattern', default='*.wav', help='File matching pattern (default: *.wav)')
+    parser.add_argument('--skip-existing', action='store_true', 
+                       help='Skip processing if output file already exists')
     
     args = parser.parse_args()
     
@@ -538,11 +560,12 @@ def main():
     
     if args.batch:
         # Batch processing mode
-        result = preprocessor.process_batch(args.input, args.output, args.pattern, args.format)
+        result = preprocessor.process_batch(args.input, args.output, args.pattern, args.format, args.skip_existing)
         print(f"\nBatch processing result:")
         print(f"Total: {result['total']}")
         print(f"Success: {result['success']}")
         print(f"Failed: {result['failed']}")
+        print(f"Skipped: {result['skipped']}")
         
         # Display failed files
         failed_files = [r for r in result['results'] if not r['success']]
@@ -552,15 +575,21 @@ def main():
                 print(f"  {f['input_path']}: {f['error']}")
     else:
         # Single file processing mode
-        result = preprocessor.process_single_file(args.input, args.output, args.format)
+        result = preprocessor.process_single_file(args.input, args.output, args.format, args.skip_existing)
         if result['success']:
-            print(f"\nProcessing successful:")
-            print(f"Input file: {result['input_path']}")
-            print(f"Output file: {result['output_path']}")
-            print(f"Signal shape: {result['signal_shape']}")
-            print(f"Cochleagram shape: {result['cochleagram_shape']}")
-            print(f"Sampling rate: {result['sr']}Hz")
-            print(f"Duration: {result['duration']:.2f} seconds")
+            if result.get('skipped', False):
+                print(f"\nFile skipped (already exists):")
+                print(f"Input file: {result['input_path']}")
+                print(f"Output file: {result['output_path']}")
+                print(f"Message: {result['message']}")
+            else:
+                print(f"\nProcessing successful:")
+                print(f"Input file: {result['input_path']}")
+                print(f"Output file: {result['output_path']}")
+                print(f"Signal shape: {result['signal_shape']}")
+                print(f"Cochleagram shape: {result['cochleagram_shape']}")
+                print(f"Sampling rate: {result['sr']}Hz")
+                print(f"Duration: {result['duration']:.2f} seconds")
         else:
             print(f"\nProcessing failed: {result['error']}")
 

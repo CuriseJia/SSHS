@@ -2,34 +2,36 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 import argparse
 import numpy as np
 from typing import Tuple, Dict, List
 from tqdm import tqdm
 from collections import defaultdict
 import json
-
+import easydict
 import torch
-
+sys.path.append(os.path.join(os.path.dirname(__file__), 'comparison'))
+from comparison.IS3.model_lvs import AVENet
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='CochAV localization bias analysis')
-    parser.add_argument('--config', type=str, default='AudioCOCO/config4.json', help='Configuration JSON')
-    parser.add_argument('--condition', type=str, default='normal', help='Silent condition')
+    parser = argparse.ArgumentParser(description='EchoPin localization bias analysis')
+    parser.add_argument('--model', type=str, default='IS3', help='EchoPin or EchoPin-S or IS3')
+    parser.add_argument('--config', type=str, default='/home/yanhao/SSHS/AudioCOCO/finalConfig/config4.json', help='Configuration JSON')
     parser.add_argument('--label', type=str, default='no', help='Label')
     parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='Image root directory')
-    parser.add_argument('--coch_root', type=str, default='/data/data0/coch/', help='coch .npy root directory')
+    parser.add_argument('--coch_root', type=str, default='/home/yanhao/', help='coch .npy root directory')
     parser.add_argument('--img_size', type=int, default=224, help='Image size')
     parser.add_argument('--batch_size', type=int, default=1, help='Evaluation batch size')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader thread count')
     parser.add_argument('--gpu', type=str, default='3', help='GPU id, e.g. 0 or 0,1')
-    parser.add_argument('--pretrained_path', type=str, required=True, help='cochAV pretrained weight path (.pth/.tar)')
+    parser.add_argument('--pretrained_path', type=str, default='/home/yanhao/SSHS/checkpoints/ours_sup_previs.pth.tar', help='EchoPin pretrained weight path (.pth/.tar)')
     parser.add_argument('--neg', action='store_true', help='Enable Neg branch (must be consistent with training)')
     parser.add_argument('--tri_map', action='store_true', help='Enable Trimap (must be consistent with training)')
     parser.add_argument('--epsilon', type=float, default=0.65)
     parser.add_argument('--epsilon2', type=float, default=0.4)
     parser.add_argument('--output_dir', type=str, default='/home/yanhao/SSHS/bias_analysis_results', help='Result output directory')
-    parser.add_argument('--max_samples', type=int, default=500, help='Maximum evaluation samples')
+    parser.add_argument('--max_samples', type=int, default=2000, help='Maximum evaluation samples')
     return parser.parse_args()
 
 
@@ -44,7 +46,7 @@ def setup_device(gpu: str) -> torch.device:
 
 def distance_to_degree(distance: float, img_size: int = 224) -> float:
     """Convert distance to angle (degrees)"""
-    return distance / img_size * 25
+    return distance / img_size * 25.6
 
 
 def calculate_bias_statistics(predictions: List[Dict]) -> Dict:
@@ -185,8 +187,8 @@ def main() -> None:
     device = setup_device(args.gpu)
 
     # Lazy import to avoid unnecessary dependencies
-    from AudioCOCO.dataset import create_npy_dataloader
-    from models.CochAV import CochAV
+    from AudioCOCO.dataset import create_npy_dataloader, create_audio_coco_dataloader
+    from models import EchoPin, EchoPin_S
 
     # Adapt parameter shape from training script
     class EvalArgs:
@@ -199,24 +201,73 @@ def main() -> None:
             self.pretrained_path = ns.pretrained_path
             self.gpu_ids = [int(x) for x in ns.gpu.split(',') if x.strip() != ''] or [0]
 
+    lvs_args = easydict.EasyDict({
+        "epsilon" : 0.65,
+        "epsilon2" : 0.4,
+        'tri_map' : True,
+        'Neg' : True,
+        'tau' : 0.03,
+        })
+
     eval_args = EvalArgs(args)
 
-    # DataLoader
-    _, dataset = create_npy_dataloader(
-        config_json_path=args.config,
-        image_root=args.image_root,
-        coch_root=args.coch_root,
-        img_size=args.img_size,
-        batch_size=1,
-        num_workers=args.num_workers,
-        shuffle=False,
-        train=False,
-    )
-
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    if args.model == 'EchoPin-S':
+        loader, dataset = create_audio_coco_dataloader(
+            config_json_path=args.config,
+            image_root=args.image_root,
+            audio_root=args.coch_root,
+            img_size=args.img_size,
+            model_type='EchoPin_S',
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=False,
+            train=False,
+        )
+    elif args.model == 'IS3':
+        loader, dataset = create_audio_coco_dataloader(
+            config_json_path=args.config,
+            image_root=args.image_root,
+            audio_root=args.coch_root,
+            img_size=args.img_size,
+            model_type='EchoPin_M',
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=False,
+            train=False,
+        )
+    else:
+        loader, dataset = create_npy_dataloader(
+            config_json_path=args.config,
+            image_root=args.image_root,
+            coch_root=args.coch_root,
+            img_size=args.img_size,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=False,
+            train=False,
+        )
 
     # Model
-    model = CochAV(eval_args, pretrained_path=eval_args.pretrained_path).to(device)
+    if args.model == 'EchoPin':
+        model = EchoPin(eval_args, pretrained_path=eval_args.pretrained_path).to(device)
+    elif args.model == 'EchoPin-S':
+        model = EchoPin_S(eval_args, pretrained_path=eval_args.pretrained_path).to(device)
+    elif args.model == 'IS3':
+        model = AVENet(lvs_args).to(device)
+        checkpoint = torch.load(args.pretrained_path, map_location='cpu')
+
+        if 'model_state_dict' in checkpoint:
+            pretrained_dict = checkpoint['model_state_dict']
+        elif 'state_dict' in checkpoint:
+            pretrained_dict = checkpoint['state_dict']
+        else:
+            pretrained_dict = checkpoint
+
+        model_dict = model.state_dict()
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict)
+
     model.eval()
 
     # Store all prediction results
@@ -238,26 +289,48 @@ def main() -> None:
             else:
                 image_t = torch.zeros_like(image_t)
 
-            # Forward pass, get A (feature map)
-            A, _, _, _, _ = model(image_t, audio_coch_t, eval_args, mode='val')
-            heatmap = A[0, 0]  # [H, W]
+            # 使用 feature map 计算 heatmap，类似 test_temp.py 的逻辑
+            image_feature = model.imgnet(image_t)
+            audio_feature = model.audnet(audio_coch_t)
+            
+            # 提取单个样本的 feature
+            F_img_flat = image_feature[0].view(512, -1)  # [512, H*W]
+            F_aud_flat = audio_feature[0].view(512, -1)  # [512, H*W]
 
-            # Maximum value coordinates
-            max_idx = torch.argmax(heatmap)
-            h, w = heatmap.shape
-            max_y = (max_idx // w).item()
-            max_x = (max_idx % w).item()
+            # 归一化
+            F_img_norm = F_img_flat / F_img_flat.norm(dim=0, keepdim=True)
+            F_aud_norm = F_aud_flat / F_aud_flat.norm(dim=0, keepdim=True)
+
+            # 计算相似度矩阵
+            S = torch.matmul(F_img_norm.transpose(0, 1), F_aud_norm)
+
+            # 获取每个空间位置的最大相似度分数
+            Image_Scores_flat = torch.max(S, dim=1).values
+            heatmap_low = Image_Scores_flat.view(14, 14)
+
+            # 插值到 224x224
+            heatmap_tensor = heatmap_low.unsqueeze(0).unsqueeze(0)
+            heatmap_high = torch.nn.functional.interpolate(
+                heatmap_tensor, 
+                size=(224, 224), 
+                mode='bilinear', 
+                align_corners=False
+            )
+            heatmap_final = heatmap_high.squeeze()
+
+            # 找到最高点坐标
+            max_flat_index = torch.argmax(heatmap_final)
+            h, w = heatmap_final.shape
+            max_y = (max_flat_index // w).item()
+            max_x = (max_flat_index % w).item()
 
             # GT bbox (already xyxy at 224 scale, long)
             bbox_xyxy = gt['bbox_xyxy_224'][0].to(device).long()
             xmin, ymin, xmax, ymax = [int(v.item()) for v in bbox_xyxy]
 
-            # heatmap scale -> 224 scale coordinate alignment
-            target_size = args.img_size
-            scale_x = target_size / float(w)
-            scale_y = target_size / float(h)
-            peak_x_224 = int(round((max_x + 0.5) * scale_x))
-            peak_y_224 = int(round((max_y + 0.5) * scale_y))
+            # 直接使用 224x224 坐标，不需要缩放
+            peak_x_224 = max_x
+            peak_y_224 = max_y
 
             # Calculate GT box center coordinates
             gt_center_x = (xmin + xmax) / 2

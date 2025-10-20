@@ -1,6 +1,7 @@
 import os
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+import random
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from PIL import Image
@@ -8,37 +9,11 @@ from PIL import Image
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 from torchvision import transforms
-
-from .data_preprocess import CochleagramPreprocessor
+import torchaudio
+import torchaudio.transforms as T
 import soundfile as sf
-
-
-class AudioCocoProcessor:
-    """Processor to convert single/dual-channel audio waveforms or wav paths to cochleagram.
-
-    - If input is path: auto-load; if stereo, last dimension is 2 channels
-    - If input is array: supports single or multi-channel, requires sampling rate
-    - Returns: np.ndarray, mono shape [F, T]; stereo [F, T, 2]
-    """
-
-    def __init__(self, **coch_config: Any) -> None:
-        self.preprocessor = CochleagramPreprocessor(**coch_config)
-
-    def __call__(self, audio: Union[str, np.ndarray], sr: Optional[int] = None) -> np.ndarray:
-        if isinstance(audio, str):
-            signal, file_sr = self.preprocessor.load_audio(audio)
-            return self.preprocessor.generate_cochleagram(signal, file_sr)
-        else:
-            assert sr is not None, "Must provide sampling rate sr when passing numpy waveform"
-            signal = audio
-            # If multi-channel and contains left/right channels, hand over to preprocessor for separate conversion
-            if signal.ndim > 1 and signal.shape[1] >= 2:
-                return self.preprocessor.generate_cochleagram(signal, sr)
-            # 否则按单通道处理
-            if signal.ndim > 1:
-                signal = np.mean(signal, axis=1)
-            return self.preprocessor.generate_cochleagram(signal, sr)
 
 
 def _build_img_transform(img_size: int = 224, train: bool = False) -> transforms.Compose:
@@ -106,15 +81,16 @@ def _maybe_denormalize_xywh(bbox_xywh: List[float], src_wh: Tuple[int, int]) -> 
 
 class AudioCocoDataset(Dataset):
     """
-
     每个样本返回:
     - image: FloatTensor [3, H, W] (默认224)
-    - audio_coch: FloatTensor [2, F, T] (立体声；若单声道则复制)
+    - audio_mel: FloatTensor [C, F, T] (C=1 for EchoPin_M, C=2 for EchoPin_S)
     - gt: Dict 包含
-        - bbox_xyxy_224: Tensor[int] [4]
+        - bbox_xyxy_224: Tensor[int] [4] (映射到224x224尺寸)
         - gt_map_224: FloatTensor [224, 224]
         - orig_size: (img_h, img_w)
         - meta: 原始条目字典(可选)
+    - neg_image: FloatTensor [3, H, W] (负样本图像)
+    - neg_audio_mel: FloatTensor [C, F, T] (负样本音频melspectrogram)
     """
 
     def __init__(
@@ -122,7 +98,7 @@ class AudioCocoDataset(Dataset):
         config_json_path: str,
         image_root: str,
         audio_root: str,
-        processor: AudioCocoProcessor,
+        model_type: str = "EchoPin_S",  # "EchoPin_M" 或 "EchoPin_S"
         img_size: int = 224,
         source_wh: Tuple[int, int] = (1920, 1080),
         coch_target_ft: Optional[Tuple[int, int]] = None,
@@ -131,21 +107,38 @@ class AudioCocoDataset(Dataset):
         super().__init__()
         self.image_root = image_root
         self.audio_root = audio_root
-        self.processor = processor
+        self.model_type = model_type
         self.img_size = img_size
         self.source_wh = source_wh
         self.coch_target_ft = coch_target_ft
         self.transform = _build_img_transform(img_size, train)
+        
+        # 初始化melspectrogram转换器
+        self.melspectrogram = T.MelSpectrogram(
+            sample_rate=16000,
+            n_fft=1024,
+            hop_length=512,
+            n_mels=128,
+            power=2.0
+        )
 
         with open(config_json_path, 'r') as f:
             self.entries: List[Dict[str, Any]] = json.load(f)
+            
+        # 根据类别建立索引，便于采样负样本
+        self.category_key = 'category' if (len(self.entries) > 0 and 'category' in self.entries[0]) else None
+        self.cat_to_indices: Dict[Any, List[int]] = {}
+        if self.category_key is not None:
+            for idx, e in enumerate(self.entries):
+                cat = e[self.category_key]
+                self.cat_to_indices.setdefault(cat, []).append(idx)
 
     def __len__(self) -> int:
         return len(self.entries)
 
     def _resolve_paths(self, entry: Dict[str, Any]) -> Tuple[str, str]:
         img_path = os.path.join(self.image_root, entry['image_id'])
-        aud_path = os.path.join(self.audio_root, entry['audio'])
+        aud_path = os.path.join(self.audio_root, entry['output'])
         return img_path, aud_path
 
     def _load_image(self, path: str) -> Tuple[Tensor, Tuple[int, int]]:
@@ -154,75 +147,68 @@ class AudioCocoDataset(Dataset):
         img_t = self.transform(img)  # [3, H, W]
         return img_t, (orig_h, orig_w)
 
-    def _load_audio_coch(self, path: str) -> Tensor:
-        # 使用 soundfile 读取以保留声道, 并确保所有音频长度均为10秒
+    def _load_audio_melspectrogram(self, path: str) -> Tensor:
+        """加载音频并转换为melspectrogram"""
+        # 使用 soundfile 读取音频
         samples, sr = sf.read(path)
-        total_target = sr * 5  # 保留前5秒以便裁出2-5秒窗口
-        if samples.ndim == 1:
-            # 单声道
-            mono = samples
-            if len(mono) < total_target:
-                mono = np.pad(mono, (0, total_target - len(mono)), mode='constant', constant_values=0)
-            else:
-                mono = mono[:total_target]
-            # 统一从2s到5s取三秒
-            start = int(2.0 * sr)
-            end = int(5.0 * sr)
-            mono = mono[start:end]
-            left = mono
-            right = mono
-        else:
-            # 立体声或多声道，取前两个声道
-            left_all = samples[:, 0]
-            right_all = samples[:, 1]
-            # 对齐到前5秒
-            if len(left_all) < total_target:
-                left_all = np.pad(left_all, (0, total_target - len(left_all)), mode='constant', constant_values=0)
-            else:
-                left_all = left_all[:total_target]
-            if len(right_all) < total_target:
-                right_all = np.pad(right_all, (0, total_target - len(right_all)), mode='constant', constant_values=0)
-            else:
-                right_all = right_all[:total_target]
-            # 统一2-5秒窗口
-            start = int(2.0 * sr)
-            end = int(5.0 * sr)
-            left = left_all[start:end]
-            right = right_all[start:end]
-        # 若多声道，提取左右；若单声道，复制为双通道
-        if samples.ndim == 2 and samples.shape[1] >= 2:
-            left = samples[:, 0]
-            right = samples[:, 1]
-        else:
-            mono = samples if samples.ndim == 1 else samples[:, 0]
-            left = mono
-            right = mono
         
-        # 确保左右声道长度一致
-        min_len = min(len(left), len(right))
-        left = left[:min_len]
-        right = right[:min_len]
-        # print(f'left shape: {left.shape}, right shape: {right.shape}')
-        # 分别生成左右 cochleagram（处理器内部可选整流+0.3幂）
-        coch_L = self.processor(left, sr=sr)  # [F, T]
-        coch_R = self.processor(right, sr=sr)  # [F, T]
-        # print(f'coch_L shape: {coch_L.shape}, coch_R shape: {coch_R.shape}')
-        coch = np.stack([coch_L, coch_R], axis=0)  # [2, F, T]
-        coch_t = torch.from_numpy(coch).float()
-        # 可选缩放到目标尺寸 [2, F_tgt, T_tgt]
+        # 重采样到16kHz（melspectrogram转换器期望的采样率）
+        if sr != 16000:
+            samples = torchaudio.functional.resample(
+                torch.from_numpy(samples).float(), 
+                sr, 
+                16000
+            ).numpy()
+            sr = 16000
+        
+        # 处理音频长度，取前5秒
+        target_length = sr * 5
+        if len(samples) < target_length:
+            samples = np.pad(samples, (0, target_length - len(samples)), mode='constant', constant_values=0)
+        else:
+            samples = samples[:target_length]
+        
+        # 根据model_type处理声道
+        if self.model_type == "EchoPin_M":
+            # 单声道：如果是立体声，取平均
+            if samples.ndim == 2:
+                samples = np.mean(samples, axis=1)
+            # 转换为torch tensor
+            waveform = torch.from_numpy(samples).float().unsqueeze(0)  # [1, T]
+        else:  # EchoPin_S
+            # 双声道：如果是单声道，复制为双声道
+            if samples.ndim == 1:
+                samples = np.stack([samples, samples], axis=1)
+            # 转换为torch tensor
+            waveform = torch.from_numpy(samples).float().T  # [2, T]
+        
+        # 使用STFT转换为melspectrogram
+        melspectrogram = self.melspectrogram(waveform)  # [C, F, T] 或 [1, F, T]
+        
+        # 确保输出格式一致
+        if self.model_type == "EchoPin_M":
+            # 单声道：保持 [1, F, T]
+            pass
+        else:  # EchoPin_S
+            # 双声道：确保是 [2, F, T]
+            if melspectrogram.shape[0] == 1:
+                melspectrogram = melspectrogram.repeat(2, 1, 1)
+        
+        # 可选缩放到目标尺寸
         if self.coch_target_ft is not None:
             F_tgt, T_tgt = self.coch_target_ft
-            coch_t = torch.nn.functional.interpolate(
-                coch_t.unsqueeze(0), size=(F_tgt, T_tgt), mode='bilinear', align_corners=False
+            melspectrogram = torch.nn.functional.interpolate(
+                melspectrogram.unsqueeze(0), size=(F_tgt, T_tgt), mode='bilinear', align_corners=False
             ).squeeze(0)
-        return coch_t
+        
+        return melspectrogram
 
-    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, Dict[str, Any]]:
+    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, Dict[str, Any], Tensor, Tensor]:
         entry = self.entries[idx]
         img_path, aud_path = self._resolve_paths(entry)
 
         image_t, (orig_h, orig_w) = self._load_image(img_path)
-        audio_coch_t = self._load_audio_coch(aud_path)
+        audio_mel_t = self._load_audio_melspectrogram(aud_path)
 
         bbox_xywh: List[float] = entry['gt_box']
         # 源分辨率优先从条目中获取（例如 'width'/'height' 或 'image_width'/'image_height'），否则使用默认 source_wh
@@ -239,10 +225,31 @@ class AudioCocoDataset(Dataset):
             'meta': entry,
         }
 
-        return image_t, audio_coch_t, gt
+        # 负样本选择策略：若存在类别字段，则从所有不同类别中随机挑选；否则随机不同索引
+        if self.category_key is not None:
+            cur_cat = entry[self.category_key]
+            candidate_indices: List[int] = []
+            for cat, ids in self.cat_to_indices.items():
+                if cat != cur_cat:
+                    candidate_indices.extend(ids)
+            if len(candidate_indices) == 0:
+                neg_idx = (idx + 1) % len(self.entries)
+            else:
+                neg_idx = int(np.random.choice(candidate_indices))
+        else:
+            # 无类别字段，随机挑一个不同索引
+            neg_idx = (idx + np.random.randint(1, len(self.entries))) % len(self.entries)
+
+        # 加载负样本
+        neg_entry = self.entries[neg_idx]
+        neg_img_path, neg_aud_path = self._resolve_paths(neg_entry)
+        neg_image_t, _ = self._load_image(neg_img_path)
+        neg_audio_mel_t = self._load_audio_melspectrogram(neg_aud_path)
+
+        return image_t, audio_mel_t, gt, neg_image_t, neg_audio_mel_t
 
 
-class AudioCocoNPYDataset(Dataset):
+class AudioCochDataset(Dataset):
     """基于配置文件读取图像与已预生成的cochleagram(.npy)的Dataset。
 
     约定：
@@ -296,7 +303,7 @@ class AudioCocoNPYDataset(Dataset):
 
     def _resolve_coch_path(self, entry: Dict[str, Any]) -> str:
         output_name = entry['output']
-        base = os.path.splitext(output_name)[0]
+        base = os.path.splitext(output_name)[0].split('/')[-1]
         return os.path.join(self.coch_root, base + '.npy')
 
     def _load_image(self, path: str) -> Tuple[Tensor, Tuple[int, int]]:
@@ -383,38 +390,76 @@ class AudioCocoNPYDataset(Dataset):
         return image_t, audio_coch_t, gt, neg_image_t, neg_coch_t
 
 
-def create_dataloader(
+def _pad_last_dim(t: Tensor, target_len: int) -> Tensor:
+    """Pad tensor on the last dimension with zeros up to target_len."""
+    pad_len = target_len - t.shape[-1]
+    if pad_len <= 0:
+        return t
+    return F.pad(t, (0, pad_len))
+
+
+def _collate_coch_batch(
+    batch: List[Tuple[Tensor, Tensor, Dict[str, Any], Tensor, Tensor]]
+) -> Tuple[Tensor, Tensor, Dict[str, Any], Tensor, Tensor]:
+    """Collate function that pads variable-length cochleagram tensors."""
+    images, cochs, gts, neg_images, neg_cochs = zip(*batch)
+
+    images_t = torch.stack(images, dim=0)
+    neg_images_t = torch.stack(neg_images, dim=0)
+
+    # Determine target time dimension shared by positive/negative cochs
+    max_pos_T = max(coch.shape[-1] for coch in cochs)
+    max_neg_T = max(coch.shape[-1] for coch in neg_cochs)
+    target_T = max(max_pos_T, max_neg_T)
+
+    cochs_t = torch.stack([_pad_last_dim(coch, target_T) for coch in cochs], dim=0)
+    neg_cochs_t = torch.stack([_pad_last_dim(coch, target_T) for coch in neg_cochs], dim=0)
+
+    bbox_batch = torch.stack([gt['bbox_xyxy_224'] for gt in gts], dim=0)
+    gt_map_batch = torch.stack([gt['gt_map_224'] for gt in gts], dim=0)
+    gt_batch = {
+        'bbox_xyxy_224': bbox_batch,
+        'gt_map_224': gt_map_batch,
+        'orig_size': [gt['orig_size'] for gt in gts],
+        'meta': [gt['meta'] for gt in gts],
+    }
+
+    return images_t, cochs_t, gt_batch, neg_images_t, neg_cochs_t
+
+
+def create_audio_coco_dataloader(
     config_json_path: str,
     image_root: str,
     audio_root: str,
-    coch_config: Optional[Dict[str, Any]] = None,
     img_size: int = 224,
+    model_type: str = "EchoPin_S",
     source_wh: Tuple[int, int] = (1920, 1080),
     coch_target_ft: Optional[Tuple[int, int]] = None,
     batch_size: int = 16,
     num_workers: int = 4,
     shuffle: bool = False,
     train: bool = False,
+    collate_fn: Optional[Callable] = None,
 ) -> Tuple[DataLoader, AudioCocoDataset]:
-    """创建 DataLoader 及其底层 Dataset。
-
-    coch_config 例如可来自 `cochleargram_config.py` 的 DEFAULT_CONFIG。
-    """
-    coch_config = coch_config or {}
-    processor = AudioCocoProcessor(**coch_config)
+    """创建基于音频COCO数据集的 DataLoader。"""
     dataset = AudioCocoDataset(
         config_json_path=config_json_path,
         image_root=image_root,
         audio_root=audio_root,
-        processor=processor,
+        model_type=model_type,
         img_size=img_size,
         source_wh=source_wh,
         coch_target_ft=coch_target_ft,
         train=train,
     )
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
     return loader, dataset
-
 
 def create_npy_dataloader(
     config_json_path: str,
@@ -427,9 +472,10 @@ def create_npy_dataloader(
     num_workers: int = 4,
     shuffle: bool = False,
     train: bool = False,
-) -> Tuple[DataLoader, AudioCocoNPYDataset]:
+    collate_fn: Optional[Callable] = None,
+) -> Tuple[DataLoader, AudioCochDataset]:
     """创建基于预生成 .npy cochleagram 的 DataLoader。"""
-    dataset = AudioCocoNPYDataset(
+    dataset = AudioCochDataset(
         config_json_path=config_json_path,
         image_root=image_root,
         coch_root=coch_root,
@@ -438,16 +484,22 @@ def create_npy_dataloader(
         coch_target_ft=coch_target_ft,
         train=train,
     )
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+    effective_collate = collate_fn or _collate_coch_batch
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        collate_fn=effective_collate,
+    )
     return loader, dataset
 
 
 __all__ = [
-    'AudioCocoProcessor',
     'AudioCocoDataset',
-    'AudioCocoNPYDataset',
-    'create_dataloader',
+    'AudioCochDataset',
     'create_npy_dataloader',
+    'create_audio_coco_dataloader',
 ]
-
 

@@ -272,16 +272,16 @@ def main():
     single_objects = load_json(single_object_path)
     print(f"\nProcessing single object instances: {len(single_objects)} total")
     
-    single_objects = map_size_format(single_objects)
+    # single_objects = map_size_format(single_objects)
     
     filtered_single = filter_by_category_limit(single_objects)
     
     final_single = analyze_spatial_distribution(filtered_single)
     
-    filtered_single_path = os.path.join(output_dir, "final_val.json")
-    with open(filtered_single_path, 'w') as f:
-        json.dump(final_single, f, indent=2)
-    print(f"Filtered single objects saved: {len(final_single)} instances")
+    # filtered_single_path = os.path.join(output_dir, "final_train.json")
+    # with open(filtered_single_path, 'w') as f:
+    #     json.dump(final_single, f, indent=2)
+    # print(f"Filtered single objects saved: {len(final_single)} instances")
     
     size_labels = ["size1", "size2", "size3"]
     for size in size_labels:
@@ -298,14 +298,14 @@ def main():
     multi_objects = load_json(multi_object_path)
     print(f"\nProcessing multi object instances: {len(multi_objects)} total")
     
-    multi_objects = map_size_format(multi_objects)
+    # multi_objects = map_size_format(multi_objects)
     
     filtered_multi = filter_by_category_limit(multi_objects)
     final_multi = analyze_spatial_distribution(filtered_multi)
     
-    filtered_multi_path = os.path.join(output_dir, "final_val_multi.json")
-    with open(filtered_multi_path, 'w') as f:
-        json.dump(final_multi, f, indent=2)
+    # filtered_multi_path = os.path.join(output_dir, "final_train_multi.json")
+    # with open(filtered_multi_path, 'w') as f:
+    #     json.dump(final_multi, f, indent=2)
     print(f"Filtered multi objects saved: {len(final_multi)} instances")
     
     for size in size_labels:

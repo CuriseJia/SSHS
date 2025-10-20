@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.cuda.amp import GradScaler, autocast
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -22,6 +23,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import numpy as np
 from tqdm import tqdm
+from PIL import Image
 try:
     import wandb
     WANDB_AVAILABLE = True
@@ -36,12 +38,105 @@ import sys
 import os
 sys.path.append(os.path.dirname(__file__))
 
-from models.CochAV import CochAV
-from AudioCOCO.dataset import create_npy_dataloader
+from models import EchoPin_M, EchoPin_S, EchoPin
+from AudioCOCO.dataset import create_npy_dataloader, create_audio_coco_dataloader
 from AudioCOCO.cochleargram_config import get_config
 
 
-class CochAVTrainer:
+def get_args():
+    parser = argparse.ArgumentParser(description='EchoPin training script')
+    
+    # data
+    parser.add_argument('--train_config', type=str, default='/home/yanhao/SSHS/AudioCOCO/train.json',
+                       help='training config file path')
+    parser.add_argument('--val_config', type=str, default='/home/yanhao/SSHS/AudioCOCO/train.json',
+                       help='validation config file path')
+    parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/train2014/',
+                       help='image root directory')
+    parser.add_argument('--audio_root', type=str, default='/home/yanhao/',
+                       help='audio root directory')
+    parser.add_argument('--coch_root', type=str, default='/home/yanhao/coch_train/',
+                       help='cochleagram .npy root directory')
+    
+    # model
+    parser.add_argument('--coch_config', type=str, default='default',
+                       choices=['default', 'speech', 'music', 'high_quality'],
+                       help='cochleagram configuration')
+    parser.add_argument('--img_size', type=int, default=224,
+                       help='image size')
+    parser.add_argument('--model_type', type=str, default='EchoPin',
+                       choices=['EchoPin', 'EchoPin_M', 'EchoPin_S'],
+                       help='model type')
+    
+    # training
+    parser.add_argument('--epochs', type=int, default=10,
+                       help='training epochs')
+    parser.add_argument('--batch_size', type=int, default=2,
+                       help='batch size')
+    parser.add_argument('--lr', type=float, default=1e-4,
+                       help='learning rate')
+    parser.add_argument('--weight_decay', type=float, default=1e-4,
+                       help='weight decay')
+    parser.add_argument('--accumulation_steps', type=int, default=1,
+                       help='gradient accumulation steps')
+    parser.add_argument('--max_grad_norm', type=float, default=1.0,
+                       help='gradient clipping threshold')
+    
+    # optimization
+    parser.add_argument('--use_amp', action='store_true',
+                       help='use mixed precision training')
+    parser.add_argument('--scheduler', type=str, default='cosine',
+                       choices=['cosine', 'step', 'plateau', 'none'],
+                       help='learning rate scheduler')
+    
+    # system
+    parser.add_argument('--num_workers', type=int, default=0,
+                       help='data loader worker count')
+    parser.add_argument('--seed', type=int, default=42,
+                       help='random seed')
+    parser.add_argument('--distributed', action='store_true',
+                       help='use distributed training')
+    parser.add_argument('--gpu_ids', type=str, default="1",
+                       help='GPU ID, separated by comma, e.g. "0,1,2,3" or "0"')
+    parser.add_argument('--force_cpu', action='store_true',
+                       help='force using CPU training (even if GPU is available)')
+    
+    # logging and saving
+    parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
+                       help='checkpoint save directory')
+    parser.add_argument('--experiment_name', type=str, default='cochav_exp',
+                       help='experiment name')
+    parser.add_argument('--use_wandb', action='store_true',
+                       help='use wandb record')
+    parser.add_argument('--log_interval', type=int, default=100,
+                       help='log interval')
+    parser.add_argument('--save_interval', type=int, default=10,
+                       help='model save interval')
+    
+    # EchoPin hyperparameters
+    parser.add_argument('--epsilon', type=float, default=0.65,
+                       help='positive sample threshold')
+    parser.add_argument('--epsilon2', type=float, default=0.4,
+                       help='negative sample threshold')
+    parser.add_argument('--tri_map', action='store_true',
+                       help='use tri-value mask')
+    parser.add_argument('--Neg', action='store_true',
+                       help='use negative sample')
+    
+    # pretrained weights
+    parser.add_argument('--pretrained_path', type=str, default='/home/yanhao/SSHS/checkpoints/ours_sup_previs.pth.tar',
+                       help='IS3 pretrained weights file path (.tar or .pth file)')
+    
+    # small object optimization
+    parser.add_argument('--small_obj_weight', type=float, default=2.0,
+                       help='small object weight multiplier')
+    parser.add_argument('--detection_lr_mult', type=float, default=5.0,
+                       help='检测头学习率倍数，相对于基础学习率')
+    
+    return parser.parse_args()
+
+
+class EchoPinTrainer:
     
     def __init__(self, args):
         self.args = args
@@ -63,6 +158,7 @@ class CochAVTrainer:
         
         # Initialize data loaders
         self.train_loader, self.val_loader = self._build_dataloaders()
+        self._initialize_detection_bias()
         
         # Initialize loss function
         self.criterion = self._build_criterion()
@@ -150,9 +246,22 @@ class CochAVTrainer:
         
     def _build_model(self) -> nn.Module:
         """Build CochAV model"""
-        model = CochAV(self.args, pretrained_path=getattr(self.args, 'pretrained_path', None))
-        model = model.to(self.device)
-        
+
+        if self.args.model_type == 'EchoPin':
+            print(f"Building EchoPin model")
+            model = EchoPin(self.args, pretrained_path=getattr(self.args, 'pretrained_path', None))
+            model = model.to(self.device)
+        elif self.args.model_type == 'EchoPin_M':
+            print(f"Building EchoPin_M model")
+            model = EchoPin_M(self.args, pretrained_path=getattr(self.args, 'pretrained_path', None))
+            model = model.to(self.device)
+        elif self.args.model_type == 'EchoPin_S':
+            print(f"Building EchoPin_S model")
+            model = EchoPin_S(self.args, pretrained_path=getattr(self.args, 'pretrained_path', None))
+            model = model.to(self.device)
+        else:
+            raise ValueError(f"Invalid model type: {self.args.model_type}")
+
         # Multi-GPU data parallelism
         if self.device.type == 'cuda' and len(self.args.gpu_ids) > 1 and not self.args.distributed:
             # Set CUDA synchronization to avoid multi-GPU deadlock
@@ -209,51 +318,75 @@ class CochAVTrainer:
         
     def _build_dataloaders(self) -> Tuple[DataLoader, DataLoader]:
         """Build training and validation data loaders"""
-        # Get cochleagram configuration
-        coch_config = get_config(self.args.coch_config)
         
-        # Training set (using pre-generated .npy cochleagram)
-        _train_loader, train_dataset = create_npy_dataloader(
-            config_json_path=self.args.train_config,
-            image_root=self.args.image_root,
-            coch_root=self.args.coch_root,
-            img_size=self.args.img_size,
-            batch_size=self.args.batch_size,
-            num_workers=self.args.num_workers,
-            shuffle=True,
-            train=True
-        )
+        # 根据model_type选择不同的数据加载器
+        if self.args.model_type in ['EchoPin_M', 'EchoPin_S']:
+            # 使用AudioCocoDataset，直接处理音频文件
+            _train_loader, train_dataset = create_audio_coco_dataloader(
+                config_json_path=self.args.train_config,
+                image_root=self.args.image_root,
+                audio_root=self.args.audio_root,
+                img_size=self.args.img_size,
+                model_type=self.args.model_type,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                shuffle=True,
+                train=True
+            )
+        else:
+            # 使用预生成的cochleagram .npy文件
+            _train_loader, train_dataset = create_npy_dataloader(
+                config_json_path=self.args.train_config,
+                image_root=self.args.image_root,
+                coch_root=self.args.coch_root,
+                img_size=self.args.img_size,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                shuffle=True,
+                train=True
+            )
         
         # Optimize for small objects: calculate sample weights, higher weights for small objects
         self._compute_sample_weights(train_dataset)
         
         def _collate_with_pad(batch):
-            images, cochs, gts, neg_images, neg_cochs = zip(*batch)
+            # 检查batch格式，AudioCocoDataset和AudioCochDataset返回格式不同
+            if len(batch[0]) == 5:
+                images, audio_data, gts, neg_images, neg_audio_data = zip(*batch)
+            else:
+                raise ValueError(f"Unexpected batch format with {len(batch[0])} elements")
+            
             images = torch.stack(images, dim=0)
-            max_T = max(c.shape[-1] for c in cochs)
-            padded = []
-            for c in cochs:
-                pad_T = max_T - c.shape[-1]
+            neg_images = torch.stack(neg_images, dim=0)
+            
+            # 处理音频数据的时间维度填充
+            max_T = max(a.shape[-1] for a in audio_data)
+            padded_audio = []
+            for a in audio_data:
+                pad_T = max_T - a.shape[-1]
                 if pad_T > 0:
-                    c = F.pad(c, (0, pad_T))
-                padded.append(c)
-            cochs = torch.stack(padded, dim=0)
-            # Negative sample coch padding
-            max_T_neg = max(c.shape[-1] for c in neg_cochs)
+                    a = F.pad(a, (0, pad_T))
+                padded_audio.append(a)
+            audio_data = torch.stack(padded_audio, dim=0)
+            
+            # 处理负样本音频数据的时间维度填充
+            max_T_neg = max(a.shape[-1] for a in neg_audio_data)
             max_T_all = max(max_T, max_T_neg)
             if max_T_all != max_T:
-                # Need to pad positive samples to new maximum length
+                # 需要将正样本填充到新的最大长度
                 extra = max_T_all - max_T
                 if extra > 0:
-                    cochs = torch.nn.functional.pad(cochs, (0, extra))
-            padded_neg = []
-            for c in neg_cochs:
-                pad_T = max_T_all - c.shape[-1]
+                    audio_data = torch.nn.functional.pad(audio_data, (0, extra))
+            
+            padded_neg_audio = []
+            for a in neg_audio_data:
+                pad_T = max_T_all - a.shape[-1]
                 if pad_T > 0:
-                    c = F.pad(c, (0, pad_T))
-                padded_neg.append(c)
-            neg_cochs = torch.stack(padded_neg, dim=0)
-            neg_images = torch.stack(neg_images, dim=0)
+                    a = F.pad(a, (0, pad_T))
+                padded_neg_audio.append(a)
+            neg_audio_data = torch.stack(padded_neg_audio, dim=0)
+            
+            # 处理GT数据
             bbox = torch.stack([g['bbox_xyxy_224'] for g in gts], dim=0)
             gt_map = torch.stack([g['gt_map_224'] for g in gts], dim=0)
             orig_sizes = [g['orig_size'] for g in gts]
@@ -264,50 +397,80 @@ class CochAVTrainer:
                 'orig_size': orig_sizes,
                 'meta': metas,
             }
-            return images, cochs, gt, neg_images, neg_cochs
+            return images, audio_data, gt, neg_images, neg_audio_data
         
         # Reduce num_workers for multi-GPU to avoid process communication deadlock
-        num_workers = 0 if len(self.args.gpu_ids) > 1 else self.args.num_workers
+        if getattr(self.args, 'distributed', False):
+            num_workers = self.args.num_workers
+        else:
+            num_workers = 0 if len(self.args.gpu_ids) > 1 else self.args.num_workers
         
-        # Try to use weighted sampler, fallback to normal random sampling if failed
-        try:
-            train_loader = DataLoader(
-                train_dataset,
-                batch_size=self.args.batch_size,
-                sampler=self.sampler,  # Use weighted sampler, higher sampling probability for small objects
-                num_workers=num_workers,
-                pin_memory=True,
-                collate_fn=_collate_with_pad,
-                persistent_workers=False,  # Avoid deadlock caused by persistent worker processes
-            )
-            print("Using weighted sampler for training")
-        except Exception as e:
-            print(f"Weighted sampler failed, fallback to normal random sampling: {e}")
-            train_loader = DataLoader(
-                train_dataset,
-                batch_size=self.args.batch_size,
-                shuffle=True,  # Use normal random sampling
-                num_workers=num_workers,
-                pin_memory=True,
-                collate_fn=_collate_with_pad,
-                persistent_workers=False,
-            )
+        self.train_sampler = None
+        train_sampler = None
+        shuffle_flag = True
+        if getattr(self.args, 'distributed', False):
+            if not dist.is_available() or not dist.is_initialized():
+                raise RuntimeError("Distributed training requested but torch.distributed not initialized.")
+            self.train_sampler = DistributedSampler(train_dataset, shuffle=True, drop_last=False)
+            train_sampler = self.train_sampler
+            shuffle_flag = False
+            print("Using DistributedSampler for training")
+        else:
+            train_sampler = getattr(self, 'weighted_sampler', None)
+            if train_sampler is not None:
+                shuffle_flag = False
+                print("Using weighted sampler for training")
+            else:
+                shuffle_flag = True
+                print("Using random shuffle for training")
         
-        # Validation set (using pre-generated .npy cochleagram)
-        _val_loader, val_dataset = create_npy_dataloader(
-            config_json_path=self.args.val_config,
-            image_root=self.args.image_root,
-            coch_root=self.args.coch_root,
-            img_size=self.args.img_size,
+        train_loader = DataLoader(
+            train_dataset,
             batch_size=self.args.batch_size,
-            num_workers=self.args.num_workers,
-            shuffle=False,
-            train=False
+            sampler=train_sampler,
+            shuffle=shuffle_flag if train_sampler is None else False,
+            num_workers=num_workers,
+            pin_memory=True,
+            collate_fn=_collate_with_pad,
+            persistent_workers=False,  # Avoid deadlock caused by persistent worker processes
         )
+        
+        # Validation set
+        if self.args.model_type in ['EchoPin_M', 'EchoPin_S']:
+            # 使用AudioCocoDataset，直接处理音频文件
+            _val_loader, val_dataset = create_audio_coco_dataloader(
+                config_json_path=self.args.val_config,
+                image_root=self.args.image_root,
+                audio_root=self.args.audio_root,
+                img_size=self.args.img_size,
+                model_type=self.args.model_type,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                shuffle=False,
+                train=False
+            )
+        else:
+            # 使用预生成的cochleagram .npy文件
+            _val_loader, val_dataset = create_npy_dataloader(
+                config_json_path=self.args.val_config,
+                image_root=self.args.image_root,
+                coch_root=self.args.coch_root,
+                img_size=self.args.img_size,
+                batch_size=self.args.batch_size,
+                num_workers=self.args.num_workers,
+                shuffle=False,
+                train=False
+            )
+        self.val_sampler = None
+        val_sampler = None
+        if getattr(self.args, 'distributed', False):
+            self.val_sampler = DistributedSampler(val_dataset, shuffle=False, drop_last=False)
+            val_sampler = self.val_sampler
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.args.batch_size,
-            shuffle=False,
+            sampler=val_sampler,
+            shuffle=False if val_sampler is None else False,
             num_workers=num_workers,  # Use same worker settings
             pin_memory=True,
             collate_fn=_collate_with_pad,
@@ -320,7 +483,13 @@ class CochAVTrainer:
         """Calculate sample weights, higher weights for small objects"""
         self.sample_weights = []
         areas = []
+        cx_values = []
+        cy_values = []
+        w_values = []
+        h_values = []
         
+        if not hasattr(self, '_image_size_cache'):
+            self._image_size_cache = {}
         for i in range(len(dataset)):
             entry = dataset.entries[i]
             # Get GT bbox area
@@ -328,7 +497,37 @@ class CochAVTrainer:
                 bbox = entry['gt_box']
                 if isinstance(bbox, list) and len(bbox) == 4:
                     # bbox format is [x, y, w, h]
-                    area = max(bbox[2] * bbox[3], 1.0)  # Ensure area is at least 1
+                    width = max(float(bbox[2]), 1e-3)
+                    height = max(float(bbox[3]), 1e-3)
+                    area = width * height
+                    src_w = entry.get('width') or entry.get('image_width')
+                    src_h = entry.get('height') or entry.get('image_height')
+                    if src_w is None or src_h is None:
+                        img_id = entry.get('image_id')
+                        if img_id:
+                            if img_id not in self._image_size_cache:
+                                img_path = os.path.join(self.args.image_root, img_id)
+                                try:
+                                    with Image.open(img_path) as img:
+                                        self._image_size_cache[img_id] = img.size
+                                except Exception:
+                                    self._image_size_cache[img_id] = (self.args.img_size, self.args.img_size)
+                            src_w, src_h = self._image_size_cache[img_id]
+                        else:
+                            src_w = src_h = self.args.img_size
+                    src_w = max(float(src_w), 1.0)
+                    src_h = max(float(src_h), 1.0)
+                    x_min = max(float(bbox[0]), 0.0)
+                    y_min = max(float(bbox[1]), 0.0)
+                    x_max = min(x_min + width, float(src_w))
+                    y_max = min(y_min + height, float(src_h))
+                    clamped_width = max(x_max - x_min, 1e-3)
+                    clamped_height = max(y_max - y_min, 1e-3)
+                    area = clamped_width * clamped_height
+                    cx_values.append((x_min + 0.5 * clamped_width) / src_w)
+                    cy_values.append((y_min + 0.5 * clamped_height) / src_h)
+                    w_values.append(clamped_width / src_w)
+                    h_values.append(clamped_height / src_h)
                 else:
                     area = 1.0  # Default area
             else:
@@ -353,16 +552,68 @@ class CochAVTrainer:
             weight = 1.0 + self.args.small_obj_weight * np.sqrt(1.0 - normalized_area)
             self.sample_weights.append(weight)
         
-        # Create weighted sampler
+        # Create weighted sampler if not using distributed training
         self.sample_weights = torch.tensor(self.sample_weights, dtype=torch.float)
         # Ensure all weights are positive and in reasonable range
         self.sample_weights = torch.clamp(self.sample_weights, min=0.1, max=10.0)
         
-        self.sampler = torch.utils.data.WeightedRandomSampler(
-            weights=self.sample_weights,
-            num_samples=len(dataset),
-            replacement=True
+        if getattr(self.args, 'distributed', False):
+            self.weighted_sampler = None
+        else:
+            try:
+                self.weighted_sampler = torch.utils.data.WeightedRandomSampler(
+                    weights=self.sample_weights,
+                    num_samples=len(dataset),
+                    replacement=True
+                )
+            except Exception as e:
+                print(f"Weighted sampler initialization failed, fallback to random sampling: {e}")
+                self.weighted_sampler = None
+        if cx_values:
+            cx_arr = np.array(cx_values)
+            cy_arr = np.array(cy_values)
+            w_arr = np.array(w_values)
+            h_arr = np.array(h_values)
+            self.box_stats = {
+                'mean_cx': float(np.mean(cx_arr)),
+                'mean_cy': float(np.mean(cy_arr)),
+                'median_cx': float(np.median(cx_arr)),
+                'median_cy': float(np.median(cy_arr)),
+                'mean_w': float(np.mean(w_arr)),
+                'mean_h': float(np.mean(h_arr)),
+                'median_w': float(np.median(w_arr)),
+                'median_h': float(np.median(h_arr)),
+            }
+        else:
+            self.box_stats = None
+
+    def _initialize_detection_bias(self):
+        """Initialize detection head bias with dataset statistics if available."""
+        module = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+        if not hasattr(module, 'det_head') or not hasattr(self, 'box_stats') or not self.box_stats:
+            return
+
+        stats = self.box_stats
+        target_vals = [
+            stats.get('median_cx', stats['mean_cx']),
+            stats.get('median_cy', stats['mean_cy']),
+            stats.get('median_w', stats['mean_w']),
+            stats.get('median_h', stats['mean_h']),
+        ]
+        limits = [(0.05, 0.95), (0.05, 0.95), (0.05, 0.8), (0.05, 0.8)]
+        target = torch.tensor(
+            [
+                float(np.clip(val, low, high))
+                for val, (low, high) in zip(target_vals, limits)
+            ],
+            device=module.det_head[-1].bias.device,
+            dtype=module.det_head[-1].bias.dtype,
         )
+        target = torch.clamp(target, 1e-3, 1 - 1e-3)
+        bias_value = torch.logit(target)
+        with torch.no_grad():
+            module.det_head[-1].bias.copy_(bias_value)
+        print(f"[debug] detection bias init to {target.tolist()} (logit={bias_value.tolist()})")
         
     def _build_criterion(self) -> nn.Module:
         """Build loss function"""
@@ -388,20 +639,20 @@ class CochAVTrainer:
         
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}")
         
-        for batch_idx, (images, audio_coch, gt, neg_images, neg_coch) in enumerate(progress_bar):
+        for batch_idx, (images, audio_data, gt, neg_images, neg_audio_data) in enumerate(progress_bar):
             images = images.to(self.device, non_blocking=True)
-            audio_coch = audio_coch.to(self.device, non_blocking=True)
+            audio_data = audio_data.to(self.device, non_blocking=True)
             neg_images = neg_images.to(self.device, non_blocking=True)
-            neg_coch = neg_coch.to(self.device, non_blocking=True)
+            neg_audio_data = neg_audio_data.to(self.device, non_blocking=True)
             
             # Mixed precision training
             if self.scaler:
                 with autocast():
-                    A, logits, Pos, Neg, pred_bbox = self.model(images, audio_coch, self.args, mode='train')
+                    A, logits, Pos, Neg, pred_bbox = self.model(images, audio_data, self.args, mode='train')
                     # Negative image pairs
-                    _, logits_img_neg, _, _, _ = self.model(neg_images, audio_coch, self.args, mode='train')
+                    _, logits_img_neg, _, _, _ = self.model(neg_images, audio_data, self.args, mode='train')
                     # Negative audio pairs
-                    _, logits_aud_neg, _, _, _ = self.model(images, neg_coch, self.args, mode='train')
+                    _, logits_aud_neg, _, _, _ = self.model(images, neg_audio_data, self.args, mode='train')
                     loss, loss_img, loss_aud, loss_iou = self._compute_full_loss(logits, logits_img_neg, logits_aud_neg, pred_bbox, gt)
                     
                 # Gradient accumulation
@@ -418,9 +669,9 @@ class CochAVTrainer:
                     self.optimizer.zero_grad()
                     self.global_step += 1
             else:
-                A, logits, Pos, Neg, pred_bbox = self.model(images, audio_coch, self.args, mode='train')
-                _, logits_img_neg, _, _, _ = self.model(neg_images, audio_coch, self.args, mode='train')
-                _, logits_aud_neg, _, _, _ = self.model(images, neg_coch, self.args, mode='train')
+                A, logits, Pos, Neg, pred_bbox = self.model(images, audio_data, self.args, mode='train')
+                _, logits_img_neg, _, _, _ = self.model(neg_images, audio_data, self.args, mode='train')
+                _, logits_aud_neg, _, _, _ = self.model(images, neg_audio_data, self.args, mode='train')
                 loss, loss_img, loss_aud, loss_iou = self._compute_full_loss(logits, logits_img_neg, logits_aud_neg, pred_bbox, gt)
                 
                 loss = loss / self.args.accumulation_steps
@@ -438,7 +689,7 @@ class CochAVTrainer:
             batch_losses.append(batch_loss)  # Record current batch loss
             
             # Debug output: print IoU details and A distribution for first 10 batches, especially focus on small objects
-            if self.epoch == 0 and batch_idx < 10:
+            if self.epoch == 0 and batch_idx < 20:
                 with torch.no_grad():
                     img_size_dbg = self.args.img_size
                     # Convert center point + width/height to pixel xyxy (consistent with loss)
@@ -525,22 +776,22 @@ class CochAVTrainer:
         val_losses = []  # Record loss for each validation batch
         
         with torch.no_grad():
-            for batch_idx, (images, audio_coch, gt, neg_images, neg_coch) in enumerate(tqdm(self.val_loader, desc="Validation")):
+            for batch_idx, (images, audio_data, gt, neg_images, neg_audio_data) in enumerate(tqdm(self.val_loader, desc="Validation")):
                 images = images.to(self.device, non_blocking=True)
-                audio_coch = audio_coch.to(self.device, non_blocking=True)
+                audio_data = audio_data.to(self.device, non_blocking=True)
                 neg_images = neg_images.to(self.device, non_blocking=True)
-                neg_coch = neg_coch.to(self.device, non_blocking=True)
+                neg_audio_data = neg_audio_data.to(self.device, non_blocking=True)
                 
                 if self.scaler:
                     with autocast():
-                        A, logits, Pos, Neg, pred_bbox = self.model(images, audio_coch, self.args, mode='val')
-                        _, logits_img_neg, _, _, _ = self.model(neg_images, audio_coch, self.args, mode='val')
-                        _, logits_aud_neg, _, _, _ = self.model(images, neg_coch, self.args, mode='val')
+                        A, logits, Pos, Neg, pred_bbox = self.model(images, audio_data, self.args, mode='val')
+                        _, logits_img_neg, _, _, _ = self.model(neg_images, audio_data, self.args, mode='val')
+                        _, logits_aud_neg, _, _, _ = self.model(images, neg_audio_data, self.args, mode='val')
                         loss, loss_img, loss_aud, loss_iou = self._compute_full_loss(logits, logits_img_neg, logits_aud_neg, pred_bbox, gt)
                 else:
-                    A, logits, Pos, Neg, pred_bbox = self.model(images, audio_coch, self.args, mode='val')
-                    _, logits_img_neg, _, _, _ = self.model(neg_images, audio_coch, self.args, mode='val')
-                    _, logits_aud_neg, _, _, _ = self.model(images, neg_coch, self.args, mode='val')
+                    A, logits, Pos, Neg, pred_bbox = self.model(images, audio_data, self.args, mode='val')
+                    _, logits_img_neg, _, _, _ = self.model(neg_images, audio_data, self.args, mode='val')
+                    _, logits_aud_neg, _, _, _ = self.model(images, neg_audio_data, self.args, mode='val')
                     loss, loss_img, loss_aud, loss_iou = self._compute_full_loss(logits, logits_img_neg, logits_aud_neg, pred_bbox, gt)
                 
                 batch_loss = loss.item()
@@ -551,11 +802,12 @@ class CochAVTrainer:
                 predictions = torch.argmax(logits, dim=1)
                 # This needs to be adjusted according to actual label format
                 accuracy = self._compute_accuracy(predictions, gt)
-                total_accuracy += accuracy
-                num_samples += images.size(0)
+                batch_size = images.size(0)
+                total_accuracy += accuracy * batch_size
+                num_samples += batch_size
         
         avg_loss = total_loss / len(self.val_loader)
-        avg_accuracy = total_accuracy / num_samples
+        avg_accuracy = total_accuracy / num_samples if num_samples > 0 else 0.0
         loss_std = np.std(val_losses) if len(val_losses) > 1 else 0.0
         min_val_loss = min(val_losses) if val_losses else 0.0
         max_val_loss = max(val_losses) if val_losses else 0.0
@@ -575,19 +827,20 @@ class CochAVTrainer:
         - Contrastive loss: push positive sample scores higher than wrong images/wrong audio.
         - IoU loss: based on predicted bbox and ground truth bbox, higher weight for small objects.
         """
-        # Use smooth contrastive loss: gentle margin loss + gradient clipping
-        sim_pos = logits_pos.mean(dim=1)
-        sim_img_neg = logits_img_neg.mean(dim=1)
-        sim_aud_neg = logits_aud_neg.mean(dim=1)
-        
-        # Smooth margin loss to avoid gradient explosion
-        margin = 0.5
-        loss_img_raw = torch.clamp(margin - sim_pos + sim_img_neg, min=0)
-        loss_aud_raw = torch.clamp(margin - sim_pos + sim_aud_neg, min=0)
-        
-        # Use squared loss smoothing and limit maximum value
-        loss_img = torch.clamp(loss_img_raw.pow(2), max=4.0).mean()
-        loss_aud = torch.clamp(loss_aud_raw.pow(2), max=4.0).mean()
+        # Contrastive loss: encourage the positive logit (column 0) to stay above all negatives.
+        pos_scores = logits_pos[:, 0]
+        if logits_pos.size(1) > 1:
+            inbatch_neg_scores, _ = torch.max(logits_pos[:, 1:], dim=1)
+        else:
+            inbatch_neg_scores = torch.zeros_like(pos_scores)
+        img_neg_scores = logits_img_neg[:, 0]
+        aud_neg_scores = logits_aud_neg[:, 0]
+
+        margin = 0.2
+        loss_img_neg = F.relu(margin + img_neg_scores - pos_scores).mean()
+        loss_inbatch = F.relu(margin + inbatch_neg_scores - pos_scores).mean()
+        loss_img = loss_img_neg + loss_inbatch
+        loss_aud = F.relu(margin + aud_neg_scores - pos_scores).mean()
 
         # IoU loss (interpret prediction as center point + width/height to avoid degenerating to zero area)
         img_size = self.args.img_size
@@ -621,12 +874,32 @@ class CochAVTrainer:
         # Small object weight: smaller area has higher weight (between 1.0 and 1+small_obj_weight)
         small_obj_weights = 1.0 + self.args.small_obj_weight * (1.0 - normalized_areas)
         
-        # Weighted IoU loss
-        weighted_iou_loss = (1.0 - iou) * small_obj_weights
-        loss_iou = weighted_iou_loss.mean()
+        # Calculate normalized GT centers and sizes for regression guidance
+        gt_width = torch.clamp(gt_xyxy[:, 2] - gt_xyxy[:, 0], min=1.0)
+        gt_height = torch.clamp(gt_xyxy[:, 3] - gt_xyxy[:, 1], min=1.0)
+        gt_cx = (gt_xyxy[:, 0] + gt_xyxy[:, 2]) * 0.5 / img_size
+        gt_cy = (gt_xyxy[:, 1] + gt_xyxy[:, 3]) * 0.5 / img_size
+        gt_w = gt_width / img_size
+        gt_h = gt_height / img_size
 
-        # Adjustable weight: increase IoU loss weight to promote localization learning, higher weight for small objects
-        total_loss = loss_img + loss_aud + 5.0 * loss_iou  # IoU loss weight 5x
+        pred_center = torch.stack([cx, cy], dim=1)
+        gt_center = torch.stack([gt_cx, gt_cy], dim=1)
+        pred_size = torch.stack([w, h], dim=1)
+        gt_size = torch.stack([gt_w, gt_h], dim=1)
+
+        center_loss = F.smooth_l1_loss(pred_center, gt_center, reduction='none').sum(dim=1)
+        size_loss = F.smooth_l1_loss(pred_size, gt_size, reduction='none').sum(dim=1)
+
+        # Calculate GIoU for more informative gradients when boxes do not overlap
+        iou, giou = self._bbox_giou(pred_xyxy, gt_xyxy)
+        giou_loss = (1.0 - giou) * small_obj_weights
+
+        # Combine localization losses with weighting for small objects
+        loc_reg_loss = (center_loss + size_loss) * small_obj_weights
+        loss_iou = giou_loss.mean() + loc_reg_loss.mean()
+
+        # Adjustable weight: balance contrastive and localization terms
+        total_loss = loss_img + loss_aud + 2.0 * loss_iou
         return total_loss, loss_img, loss_aud, loss_iou
 
     @staticmethod
@@ -643,6 +916,33 @@ class CochAVTrainer:
         area2 = torch.clamp(box2[:, 2] - box2[:, 0], min=0) * torch.clamp(box2[:, 3] - box2[:, 1], min=0)
         union = area1 + area2 - inter_area + 1e-6
         return inter_area / union
+    
+    @staticmethod
+    def _bbox_giou(box1: torch.Tensor, box2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Calculate IoU and GIoU for xyxy boxes."""
+        inter_xmin = torch.maximum(box1[:, 0], box2[:, 0])
+        inter_ymin = torch.maximum(box1[:, 1], box2[:, 1])
+        inter_xmax = torch.minimum(box1[:, 2], box2[:, 2])
+        inter_ymax = torch.minimum(box1[:, 3], box2[:, 3])
+        inter_w = torch.clamp(inter_xmax - inter_xmin, min=0)
+        inter_h = torch.clamp(inter_ymax - inter_ymin, min=0)
+        inter_area = inter_w * inter_h
+
+        area1 = torch.clamp(box1[:, 2] - box1[:, 0], min=0) * torch.clamp(box1[:, 3] - box1[:, 1], min=0)
+        area2 = torch.clamp(box2[:, 2] - box2[:, 0], min=0) * torch.clamp(box2[:, 3] - box2[:, 1], min=0)
+        union = area1 + area2 - inter_area + 1e-6
+        iou = inter_area / union
+
+        c_xmin = torch.minimum(box1[:, 0], box2[:, 0])
+        c_ymin = torch.minimum(box1[:, 1], box2[:, 1])
+        c_xmax = torch.maximum(box1[:, 2], box2[:, 2])
+        c_ymax = torch.maximum(box1[:, 3], box2[:, 3])
+        c_w = torch.clamp(c_xmax - c_xmin, min=0)
+        c_h = torch.clamp(c_ymax - c_ymin, min=0)
+        c_area = c_w * c_h + 1e-6
+
+        giou = iou - (c_area - union) / c_area
+        return iou, giou
         
     def _compute_accuracy(self, predictions: torch.Tensor, gt: Dict[str, Any]) -> float:
         """计算准确率"""
@@ -706,6 +1006,9 @@ class CochAVTrainer:
             self.epoch = epoch
             start_time = time.time()
             
+            if getattr(self.args, 'distributed', False) and self.train_sampler is not None:
+                self.train_sampler.set_epoch(epoch)
+            
             # 训练
             train_metrics = self.train_epoch()
             
@@ -751,95 +1054,6 @@ class CochAVTrainer:
         print("训练完成！")
 
 
-def get_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='CochAV训练脚本')
-    
-    # 数据相关
-    parser.add_argument('--train_config', type=str, default='AudioCOCO/config1.json',
-                       help='训练集配置文件路径')
-    parser.add_argument('--val_config', type=str, default='AudioCOCO/config1.json',
-                       help='验证集配置文件路径')
-    parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/',
-                       help='图像根目录')
-    parser.add_argument('--coch_root', type=str, default='/home/yanhao/SSHS/AudioCOCO/coch/',
-                       help='cochleagram .npy 根目录')
-    
-    # 模型相关
-    parser.add_argument('--coch_config', type=str, default='default',
-                       choices=['default', 'speech', 'music', 'high_quality'],
-                       help='cochleagram配置')
-    parser.add_argument('--img_size', type=int, default=224,
-                       help='图像尺寸')
-    
-    # 训练相关
-    parser.add_argument('--epochs', type=int, default=10,
-                       help='训练轮数')
-    parser.add_argument('--batch_size', type=int, default=4,
-                       help='批次大小')
-    parser.add_argument('--lr', type=float, default=1e-5,
-                       help='学习率')
-    parser.add_argument('--weight_decay', type=float, default=1e-4,
-                       help='权重衰减')
-    parser.add_argument('--accumulation_steps', type=int, default=8,
-                       help='梯度累积步数')
-    parser.add_argument('--max_grad_norm', type=float, default=1.0,
-                       help='梯度裁剪阈值')
-    
-    # 优化策略
-    parser.add_argument('--use_amp', action='store_true',
-                       help='使用混合精度训练')
-    parser.add_argument('--scheduler', type=str, default='cosine',
-                       choices=['cosine', 'step', 'plateau', 'none'],
-                       help='学习率调度器')
-    
-    # 系统相关
-    parser.add_argument('--num_workers', type=int, default=4,
-                       help='数据加载器工作进程数')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='随机种子')
-    parser.add_argument('--distributed', action='store_true',
-                       help='使用分布式训练')
-    parser.add_argument('--gpu_ids', type=str, default="2",
-                       help='指定使用的GPU ID，用逗号分隔，如 "0,1,2,3" 或 "0"')
-    parser.add_argument('--force_cpu', action='store_true',
-                       help='强制使用CPU训练（即使有GPU可用）')
-    
-    # 日志和保存
-    parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
-                       help='检查点保存目录')
-    parser.add_argument('--experiment_name', type=str, default='cochav_exp',
-                       help='实验名称')
-    parser.add_argument('--use_wandb', action='store_true',
-                       help='使用wandb记录')
-    parser.add_argument('--log_interval', type=int, default=100,
-                       help='日志记录间隔')
-    parser.add_argument('--save_interval', type=int, default=10,
-                       help='模型保存间隔')
-    
-    # CochAV特定参数
-    parser.add_argument('--epsilon', type=float, default=0.65,
-                       help='正样本阈值')
-    parser.add_argument('--epsilon2', type=float, default=0.4,
-                       help='负样本阈值')
-    parser.add_argument('--tri_map', action='store_true',
-                       help='使用三值掩码')
-    parser.add_argument('--Neg', action='store_true',
-                       help='使用负样本')
-    
-    # 预训练权重
-    parser.add_argument('--pretrained_path', type=str, default='/home/yanhao/SSHS/checkpoints/ours_sup_previs.pth.tar',
-                       help='IS3预训练权重文件路径 (.tar 或 .pth 文件)')
-    
-    # 小物体优化参数
-    parser.add_argument('--small_obj_weight', type=float, default=3.0,
-                       help='小物体权重倍数，越大越关注小物体')
-    parser.add_argument('--detection_lr_mult', type=float, default=2.0,
-                       help='检测头学习率倍数，相对于基础学习率')
-    
-    return parser.parse_args()
-
-
 def main():
     """主函数"""
     args = get_args()
@@ -848,7 +1062,7 @@ def main():
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     
     # 创建训练器
-    trainer = CochAVTrainer(args)
+    trainer = EchoPinTrainer(args)
     
     # 开始训练
     trainer.train()

@@ -8,5 +8,5 @@
 	path = pycochleagram
 	url = https://github.com/mcdermottLab/pycochleagram.git
 [submodule "Depth-Anything"]
-	path = Depth-Anything
+	path = AudioCOCO/Depth-Anything
 	url = https://github.com/LiheYoung/Depth-Anything.git

@@ -1,3 +1,15 @@
+matplotlib
+librosa
+scikit_learn
+tqdm
+transformers
+pandas
+scipy
+numpy
+pycocotools
+timm
+easydict
+
 # av==15.1.0
 # cython==3.1.2
 # dask==2025.9.1
@@ -32,14 +44,3 @@
 # tqdm==4.67.1
 # transformers==4.50.0
 # Utils==1.0.2
-
-matplotlib
-librosa
-scikit_learn
-tqdm
-transformers
-pandas
-scipy
-numpy
-pycocotools
-timm
