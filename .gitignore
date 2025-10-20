@@ -21,6 +21,10 @@
 
 # Logs
 *.log
+*.pdf
+*.png
+*.jpg
+*.txt
 
 # project files
 *.npy
@@ -45,6 +49,7 @@ __pycache__/
 
 # other files
 pretrained/
+AudioCOCO/finalConfig/
 dataset/
 checkpoint/
 AudioCOCO/coch/

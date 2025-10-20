@@ -32,8 +32,10 @@ def get_object_size(ratio):
         return "size1"
     elif ratio <= 0.15:
         return "size2"
-    else:
+    elif ratio <= 0.25:
         return "size3"
+    else:
+        return ''
 
 def resize_image_and_annotations(image, gt_box, mask, target_width=1920, target_height=1080):
     """Resize image to target size and adjust gt_box and mask accordingly"""
@@ -140,66 +142,77 @@ def filter_coco_instances(coco_annotation_file, category_file, output_file):
         
         # Check if there is only one instance of target category
         valid_categories = [cat for cat in category_counts.keys() if cat in target_categories]
-        if len(valid_categories) != 1:
-            continue  # Skip images with multiple target categories or no target categories
+        # if len(valid_categories) != 1:
+        #     continue  # Skip images with multiple target categories or no target categories
         
-        category_name = valid_categories[0]
-        if category_counts[category_name] != 1:
-            continue  # Skip images with multiple instances of this category
+        valid_cats = []
+        for cate in valid_categories:
+            cat_count = category_counts[cate]
+            if cat_count == 1:
+                valid_cats.append(cate)
+
+        # category_name = valid_categories[0]
+        # if category_counts[category_name] != 1:
+        #     continue  # Skip images with multiple instances of this category
         
         # Find the annotation for this instance
-        target_ann = None
-        for ann in annotations:
-            cat_id = ann['category_id']
-            cat_info = coco.loadCats(cat_id)[0]
-            if cat_info['name'] == category_name:
-                target_ann = ann
-                break
+
+        for category_name in valid_cats:
+            target_ann = None
+            for ann in annotations:
+                cat_id = ann['category_id']
+                cat_info = coco.loadCats(cat_id)[0]
+                if cat_info['name'] == category_name:
+                    target_ann = ann
+                    break
+            
+            if target_ann is None:
+                continue
         
-        if target_ann is None:
-            continue
+            # Decode mask
+            mask = coco.annToMask(target_ann)
+            
+            # Calculate mask area ratio
+            area_ratio = calculate_mask_area_ratio(mask, image_width, image_height)
         
-        # Decode mask
-        mask = coco.annToMask(target_ann)
+            # Determine object_size
+            object_size = get_object_size(area_ratio)
+
+            if object_size == '':
+                continue
+                
+            # Get gt_box (COCO format: [x, y, width, height])
+            gt_box = target_ann['bbox']
         
-        # Calculate mask area ratio
-        area_ratio = calculate_mask_area_ratio(mask, image_width, image_height)
+            # Simulate image resize (here we only adjust coordinates, not actually process images)
+            # In actual applications, you may need to load actual images for resize
+            resized_gt_box = [
+                int(gt_box[0] * 1920 / image_width),   # x
+                int(gt_box[1] * 1080 / image_height),  # y
+                int(gt_box[2] * 1920 / image_width),   # width
+                int(gt_box[3] * 1080 / image_height)   # height
+            ]
         
-        # Determine object_size
-        object_size = get_object_size(area_ratio)
+            # Calculate center point
+            center_point = calculate_center_point(resized_gt_box)
+            
+            # Create instance record
+            # Convert numeric ID to COCO format filename (auto train/val)
+            image_filename = format_image_filename(coco_annotation_file, img_id)
         
-        # Get gt_box (COCO format: [x, y, width, height])
-        gt_box = target_ann['bbox']
+            instance_record = {
+                "image_id": image_filename,
+                "category": category_name,
+                "object_size": object_size,
+                "gt_box": resized_gt_box,
+                "point": center_point
+            }
         
-        # Simulate image resize (here we only adjust coordinates, not actually process images)
-        # In actual applications, you may need to load actual images for resize
-        resized_gt_box = [
-            int(gt_box[0] * 1920 / image_width),   # x
-            int(gt_box[1] * 1080 / image_height),  # y
-            int(gt_box[2] * 1920 / image_width),   # width
-            int(gt_box[3] * 1080 / image_height)   # height
-        ]
+            filtered_instances.append(instance_record)
+            stats['valid_images'] += 1
+            stats['category_counts'][category_name] += 1
+            stats['size_counts'][object_size] += 1
         
-        # Calculate center point
-        center_point = calculate_center_point(resized_gt_box)
-        
-        # Create instance record
-        # Convert numeric ID to COCO format filename (auto train/val)
-        image_filename = format_image_filename(coco_annotation_file, img_id)
-        
-        instance_record = {
-            "image_id": image_filename,
-            "category": category_name,
-            "object_size": object_size,
-            "gt_box": resized_gt_box,
-            "point": center_point
-        }
-        
-        filtered_instances.append(instance_record)
-        stats['valid_images'] += 1
-        stats['category_counts'][category_name] += 1
-        stats['size_counts'][object_size] += 1
-    
     # Save results
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(filtered_instances, f, indent=2, ensure_ascii=False)

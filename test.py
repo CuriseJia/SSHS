@@ -11,16 +11,16 @@ import torch
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='CochAV heatmap hit rate evaluation')
-    parser.add_argument('--config', type=str, default='AudioCOCO/config6.json', help='Configuration JSON')
-    parser.add_argument('--condition', type=str, default='normal', help='Silent condition')
-    parser.add_argument('--label', type=str, default='no', help='Label')
+    parser.add_argument('--config', type=str, default='/home/yanhao/SSHS/AudioCOCO/finalConfig/config4.json', help='Configuration JSON')
+    parser.add_argument('--condition', type=str, default='blind', help='Silent or blind condition')
+    parser.add_argument('--label', type=str, default='noise', help='Noise or silent or black input')
     parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='Image root directory')
-    parser.add_argument('--coch_root', type=str, default='/data/data0/coch/', help='coch .npy root directory')
+    parser.add_argument('--coch_root', type=str, default='/home/yanhao/coch_test/', help='coch .npy root directory')
     parser.add_argument('--img_size', type=int, default=224, help='Image size')
-    parser.add_argument('--batch_size', type=int, default=32, help='Evaluation batch size')
+    parser.add_argument('--batch_size', type=int, default=1, help='Evaluation batch size')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader thread count')
     parser.add_argument('--gpu', type=str, default='3', help='GPU id, e.g. 0 or 0,1')
-    parser.add_argument('--pretrained_path', type=str, required=True, help='cochAV pretrained weight path (.pth/.tar)')
+    parser.add_argument('--pretrained_path', type=str, default='checkpoints/best.pth', help='cochAV pretrained weight path (.pth/.tar)')
     parser.add_argument('--neg', action='store_true', help='Enable Neg branch (must be consistent with training)')
     parser.add_argument('--tri_map', action='store_true', help='Enable Trimap (must be consistent with training)')
     parser.add_argument('--epsilon', type=float, default=0.65)
@@ -42,7 +42,7 @@ def main() -> None:
 
     # Lazy import to avoid unnecessary dependencies
     from AudioCOCO.dataset import create_npy_dataloader
-    from models.CochAV import CochAV
+    from models.EchoPin import EchoPin
 
     # Adapt parameter shape from training script
     class EvalArgs:
@@ -58,21 +58,19 @@ def main() -> None:
     eval_args = EvalArgs(args)
 
     # DataLoader
-    _, dataset = create_npy_dataloader(
+    loader, dataset = create_npy_dataloader(
         config_json_path=args.config,
         image_root=args.image_root,
         coch_root=args.coch_root,
         img_size=args.img_size,
-        batch_size=1,
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
         shuffle=False,
         train=False,
     )
 
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
-
     # Model
-    model = CochAV(eval_args, pretrained_path=eval_args.pretrained_path).to(device)
+    model = EchoPin(eval_args, pretrained_path=eval_args.pretrained_path).to(device)
     model.eval()
 
     correct = 0
@@ -88,7 +86,7 @@ def main() -> None:
         for image_t, audio_coch_t, gt, _, _ in tqdm(loader, total=len(dataset), desc='Evaluating'):
             image_t = image_t.to(device, non_blocking=True)
             audio_coch_t = audio_coch_t.to(device, non_blocking=True)
-            if args.config.endswith('config4.json'):
+            if args.condition == 'blind':
                 if args.label == 'noise':
                     image_t = torch.randn_like(image_t)
                 else:
@@ -99,54 +97,69 @@ def main() -> None:
                 else:
                     audio_coch_t = torch.zeros_like(audio_coch_t)
 
-            A, _, _, _, _ = model(image_t, audio_coch_t, eval_args, mode='val')
-            heatmap = A[0, 0]  # [H, W]
+            image_feature = model.imgnet(image_t)
+            audio_feature = model.audnet(audio_coch_t)
+            
+            batch_size = image_t.size(0)
 
-            # Maximum value coordinates
-            max_idx = torch.argmax(heatmap)
-            h, w = heatmap.shape
-            max_y = (max_idx // w).item()
-            max_x = (max_idx % w).item()
+            for b in range(batch_size):
+                # flatten
+                F_img_flat = image_feature[b].view(512, -1)  # [512, H*W]
+                F_aud_flat = audio_feature[b].view(512, -1)  # [512, H*W]
 
-            # GT bbox (already xyxy at 224 scale, long)
-            bbox_xyxy = gt['bbox_xyxy_224'][0].to(device).long()
-            xmin, ymin, xmax, ymax = [int(v.item()) for v in bbox_xyxy]
+                # normalization
+                F_img_norm = F_img_flat / F_img_flat.norm(dim=0, keepdim=True)
+                F_aud_norm = F_aud_flat / F_aud_flat.norm(dim=0, keepdim=True)
 
-            # heatmap scale -> 224 scale coordinate alignment
-            # ResNet18 outputs 14x14 feature map, need to map to 224x224 image
-            target_size = args.img_size  # 224
-            scale_x = target_size / float(w)  # 224/14 = 16
-            scale_y = target_size / float(h)  # 224/14 = 16
-            peak_x_224 = int(round((max_x + 0.5) * scale_x))
-            peak_y_224 = int(round((max_y + 0.5) * scale_y))
+                # compute similarity
+                S = torch.matmul(F_img_norm.transpose(0, 1), F_aud_norm)
 
-            # Hit judgment: whether peak falls into gt_box
-            hit = (xmin <= peak_x_224 <= xmax) and (ymin <= peak_y_224 <= ymax)
-            correct += int(hit)
-            total += 1
+                # get heatmap
+                Image_Scores_flat = torch.max(S, dim=1).values
+                heatmap_low = Image_Scores_flat.view(14, 14)
 
-            # Get object_size grouping from config entry (compatible with different collate forms)
-            try:
-                meta = gt['meta']
-                obj_size = None
-                if isinstance(meta, dict):
-                    if 'object_size' in meta:
-                        val = meta['object_size']
-                        if isinstance(val, (list, tuple)):
-                            obj_size = val[0] if len(val) > 0 else None
-                        else:
-                            obj_size = val
-                elif isinstance(meta, (list, tuple)) and len(meta) > 0:
-                    # Might be [entry_dict]
-                    first = meta[0]
-                    if isinstance(first, dict):
-                        obj_size = first.get('object_size', None)
+                # interpolate
+                heatmap_tensor = heatmap_low.unsqueeze(0).unsqueeze(0)
+                heatmap_high = torch.nn.functional.interpolate(
+                    heatmap_tensor, 
+                    size=(224, 224), 
+                    mode='bilinear', 
+                    align_corners=False
+                )
+                heatmap_final = heatmap_high.squeeze()
 
-                if obj_size in size_stats:
-                    size_stats[obj_size]['total'] += 1
-                    size_stats[obj_size]['correct'] += int(hit)
-            except Exception:
-                pass
+                # get the max index
+                max_flat_index = torch.argmax(heatmap_final)
+                h, w = heatmap_final.shape
+                max_y = (max_flat_index // w).item()
+                max_x = (max_flat_index % w).item()
+
+                # GT bbox (already xyxy at 224 scale, long)
+                bbox_xyxy = gt['bbox_xyxy_224'][b].to(device).long()
+                xmin, ymin, xmax, ymax = [int(v.item()) for v in bbox_xyxy]
+
+                # Hit judgment: whether peak falls into gt_box
+                hit = (xmin <= max_x <= xmax) and (ymin <= max_y <= ymax)
+                correct += int(hit)
+                total += 1
+
+                # Get object_size grouping from config entry
+                try:
+                    meta_all = gt['meta']
+                    meta = meta_all[b] if isinstance(meta_all, (list, tuple)) and len(meta_all) > b else meta_all
+                    obj_size = None
+                    if isinstance(meta, dict):
+                        if 'object_size' in meta:
+                            val = meta['object_size']
+                            if isinstance(val, (list, tuple)):
+                                obj_size = val[0] if len(val) > 0 else None
+                            else:
+                                obj_size = val
+                    if obj_size in size_stats:
+                        size_stats[obj_size]['total'] += 1
+                        size_stats[obj_size]['correct'] += int(hit)
+                except Exception:
+                    pass
 
     acc = correct / total if total > 0 else 0.0
     print(f'Total={total}  Correct={correct}  Acc={acc:.4f}')

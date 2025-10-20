@@ -13,6 +13,7 @@ In this paper, we build the first framework to benchmark current Audio-Visual mo
 
 
 ## 📣 Updates
+* **[2025/10/20]**: We released all related methods. Due to the space limitation, we don't release the cochleagram .npy files. If you want to build cochleagram for testing or fine-tuning, please follow the next guidance. If you meet any problems or bugs, welcome to contact [me](jiayanhao.publish@gmail.com) or open an issue, we will give feedback ASAP.
 * **[2025/09/25]**: We are releasing the code in process. (Firstly the Unity rendering part, then the dataset part and finally the training and testing code. Due to some other DDLs, the total process may continue for a few weeks. Please understand.)
 * **[2025/09/18]**: Our **SSHS** has been selected as a Spotlight paper at NeurIPS 2025! (Top 3% of 21575 submissions).
 
@@ -39,7 +40,7 @@ pip install -r requirements.txt
 
 ### Dataset Preparation
 
-If you want to build the full **AudioCOCO**, please following the next guidance.
+If you want to build the full **AudioCOCO** from scratch, please follow the next guidance.
 
 1. Download the [MS-COCO](https://cocodataset.org/#home) and [VGG-Sound](https://github.com/hche11/VGGSound).
 
@@ -47,34 +48,49 @@ If you want to build the full **AudioCOCO**, please following the next guidance.
 
 3. Use the [filter_audio.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/filter_audio.py) and [filter_image.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/filter_image.py) files to filter the high-quaility part.
 
-4. Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console. For a reference, each audio needs about 10 seconds to render.
+4. Set up the [DepthAnything](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/Depth-Anything/) model, move the [depth.py](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/depth.py) file to DepthAnything folder and then estimate the depth information for all images and update all json files.
 
-5. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram.
+5. Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console. For a reference, each audio needs about 10 seconds to render.
+
+6. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram.
 
 
 
 ### Training
 The training dataset contains about 1,800,000 pairs, and you can use Unity to generate and train. 
 ```shell
-python train.py 
+python train.py --train_config path_to_the_train_config_file \\
+    --image_root path_to_image \\
+    --audio_root path_to_audio \\
+    --coch_root path_to_cochleagram \\
+    --pretrained_path path_to_load_the_IS3_checkpoint_file_to_finetune \\
 ```
 
 ### Test
 The test dataset and the checkpoint can be downloaded here. 
 ```shell
-python test.py --pretrained_path path_to_the_checkpoint_file
+python test.py --pretrained_path path_to_the_checkpoint_file \\
+    --config path_to_the_test_config_file \\
+    --image_root path_to_image \\
+    --coch_root path_to_cochleagram \\
+    --condition select_the_condition4or5 \\
+    --label select_the_different_input_for_condition4or5 \\
 ```
 
 ### Human Experiment Result Evaluation
 ```shell
-python calculate.py
+python human_aacc.py # caculate the A-Accuracy
+python human_vacc.py # caculate the V-Accuracy
+python human_asymmetry.py # analyze the direction bias
 ```
 
-<div align=center>
+### All Data, Checkpoint and Human Result
+
+<div align=left>
 
 |Datasets|Checkpoint|HumanResult|
 |:--------:|:--------------:|:--------:|
-| [Download](https://drive.google.com/drive/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv?usp=sharing) | [Download](https://drive.google.com/drive/u/1/folders/1kCKV9_ZCoAOs_K9dVYtuJL_CYaQMP-6x) | [Download](https://drive.google.com/drive/folders/1_DuocnnxX_gqjuCG8LM4buq2RphSQha-?usp=sharing) |
+| [Download](https://drive.google.com/drive/u/0/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv) | [Download](https://drive.google.com/drive/u/0/folders/1gASarWGUdHcjQ0QAbrjIoekjDBMxMRcv) | [Download](https://drive.google.com/drive/u/0/folders/17bfIVvFhsrevz7tvwklsg9J1NWaekxxM) |
 
 </div>
 
@@ -93,13 +109,3 @@ If you find this paper useful, please consider staring 🌟 this repo and citing
   year={2025}
 }
 ```
-
-<details open><summary>💡 I also have other AI-Related projects that may interest you ✨. </summary><p>
-
-> [**Freestyleret: retrieving images from style-diversified queries**](https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/03384.pdf)<br>
-> Accepted by ECCV 2024 | [[Freestyleret Code]](https://github.com/CuriseJia/ECCV24-FreeStyleRet)<br>
-> Hao Li*, Yanhao Jia*, Peng Jin, Zesen Cheng, Kehan Li, Jialu Sui, Chang Liu, Li Yuan
-
-> [**Uni-Retrieval: A Multi-Style Retrieval Framework for STEM’s Education**](https://aclanthology.org/2025.acl-long.502/)<br>
-> Accepted by ACL 2025 | [[Uni-Retrieval Code]](https://github.com/CuriseJia/ACL25-Uni-Retrieval)<br>
-> Yanhao Jia, Xinyi Wu, Li Hao, Qinglin Zhang, Yuxiao Hu, Shuai Zhao, Wenqi Fan
