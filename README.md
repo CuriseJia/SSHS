@@ -52,7 +52,7 @@ If you want to build the full **AudioCOCO** from scratch, please follow the next
 
 5. Open the [UnityProject](https://github.com/CuriseJia/SSHS/tree/main/UnityProject) in the Unity, choose the [generation file](https://github.com/CuriseJia/SSHS/blob/main/UnityProject/Assets/SoundGenFinal.cs) and move to the console. For a reference, each audio needs about 10 seconds to render.
 
-6. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram.
+6. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram. The details can refer to [Cochleagram_README](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO)
 
 
 #### The correlation between config json file and conditions
