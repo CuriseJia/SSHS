@@ -7,22 +7,21 @@ from typing import Dict, List, Tuple, Optional, Set
 
 import torch
 import numpy as np
-from tqdm import tqdm
 import easydict
 from comparison.IS3.model_lvs import AVENet
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='CochAV heatmap vacc evaluation (mask hit rate)')
-    parser.add_argument('--model', type=str, default='IS3', help='EchoPin or IS3')
-    parser.add_argument('--label', type=str, default='silent', help='silent or noise')
+    parser.add_argument('--model', type=str, default='EchoPin', help='EchoPin or IS3')
+    parser.add_argument('--label', type=str, default='no', help='silent or noise')
     parser.add_argument('--config', type=str, default='/home/yanhao/SSHS/AudioCOCO/finalConfig/config4.json', help='Configuration JSON')
     parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='Image root directory')
-    parser.add_argument('--coch_root', type=str, default='/home/yanhao/', help='coch .npy root directory')
+    parser.add_argument('--coch_root', type=str, default='/home/yanhao/coch_test/', help='coch .npy root directory')
     parser.add_argument('--img_size', type=int, default=224, help='Image size')
     parser.add_argument('--batch_size', type=int, default=4, help='Evaluation batch size')
     parser.add_argument('--num_workers', type=int, default=0, help='DataLoader thread count')
     parser.add_argument('--gpu', type=str, default='2', help='GPU id, e.g. 0 or 0,1')
-    parser.add_argument('--pretrained_path', type=str, default='/home/yanhao/SSHS/checkpoints/ours_sup_previs.pth.tar', help='cochAV pretrained weight path (.pth/.tar)')
+    parser.add_argument('--pretrained_path', type=str, default='/home/yanhao/SSHS/EchoPin.pth', help='cochAV pretrained weight path (.pth/.tar)')
     parser.add_argument('--instances_json', type=str, default='/home/yanhao/SSHS/AudioCOCO/instances_val2014.json', help='COCO instances json path')
     parser.add_argument('--category_txt', type=str, default='/home/yanhao/SSHS/AudioCOCO/category.txt', help='Category name list (one per line)')
     return parser.parse_args()
@@ -210,7 +209,7 @@ def main() -> None:
     }
 
     with torch.no_grad():
-        for image_t, audio_coch_t, gt, _, _ in tqdm(loader, total=len(dataset), desc='Evaluating VACC'):
+        for image_t, audio_coch_t, gt, _, _ in loader:
             image_t = image_t.to(device, non_blocking=True)
             audio_coch_t = audio_coch_t.to(device, non_blocking=True)
             if args.label == 'silent':

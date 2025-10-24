@@ -55,6 +55,17 @@ If you want to build the full **AudioCOCO** from scratch, please follow the next
 6. Use the [Pycochleagram](https://github.com/CuriseJia/SSHS/tree/main/AudioCOCO/data_preprocess.py) to convert the waveform to cochleagram.
 
 
+#### The correlation between config json file and conditions
+```shell
+config1.json - Congruent condition
+config2.json - ConflictVCue condition
+config3.json - AbsentVCue condition
+config4.json --condition blind --label nosie - AOnly (Vision noise) condition
+config4.json --condition blind --label gray - AOnly (Vision gray) condition
+config1.json --condition slient --label nosie - VOnly (Audio noise) condition
+config1.json --condition slient --label silent - VOnly (Audio silent) condition
+config6.json - Multi-Instance Localization condition
+```
 
 ### Training
 The training dataset contains about 1,800,000 pairs, and you can use Unity to generate and train. 
