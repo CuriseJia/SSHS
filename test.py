@@ -11,7 +11,7 @@ import torch
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='CochAV heatmap hit rate evaluation')
-    parser.add_argument('--config', type=str, default='/home/yanhao/SSHS/AudioCOCO/finalConfig/config3_depth.json', help='Configuration JSON')
+    parser.add_argument('--config', type=str, default='/home/yanhao/SSHS/AudioCOCO/finalConfig/config3_depth.json', help='Configuration JSON, e.g. config1.json, config2.json, config3.json, config4.json, config6.json')
     parser.add_argument('--condition', type=str, default='no', help='Silent or blind condition')
     parser.add_argument('--label', type=str, default='no', help='Noise or silent or black input')
     parser.add_argument('--image_root', type=str, default='/home/yanhao/coco/val2014/', help='Image root directory')
