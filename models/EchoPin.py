@@ -108,16 +108,13 @@ class EchoPin(nn.Module):
         B = image.shape[0]
         mask = (1 - 100 * torch.eye(B, B, device=image.device))
 
-        # Image encoder
         img = self.imgnet(image)
         img = F.normalize(img, dim=1)
 
-        # Audio encoder (stereo cochleagram)
         aud = self.audnet(audio_coch_stereo)
         aud = self.avgpool(aud).view(B, -1)
         aud = F.normalize(aud, dim=1)
 
-        # Join: Completely consistent with AVENet
         A = torch.einsum('ncqa,nchw->nqa', [img, aud.unsqueeze(2).unsqueeze(3)]).unsqueeze(1)
         A0 = torch.einsum('ncqa,ckhw->nkqa', [img, aud.T.unsqueeze(2).unsqueeze(3)])
 
@@ -131,9 +128,7 @@ class EchoPin(nn.Module):
 
         Pos_all = self.m((A0 - self.epsilon) / self.tau)
 
-        # Positive similarity
         sim1 = (Pos * A).view(*A.shape[:2], -1).sum(-1) / (Pos.view(*Pos.shape[:2], -1).sum(-1))
-        # Across negatives
         sim = ((Pos_all * A0).view(*A0.shape[:2], -1).sum(-1) / Pos_all.view(*Pos_all.shape[:2], -1).sum(-1)) * mask
         sim2 = (Neg * A).view(*A.shape[:2], -1).sum(-1) / Neg.view(*Neg.shape[:2], -1).sum(-1)
 

@@ -644,7 +644,6 @@ class EchoPinTrainer:
             audio_data = audio_data.to(self.device, non_blocking=True)
             neg_images = neg_images.to(self.device, non_blocking=True)
             neg_audio_data = neg_audio_data.to(self.device, non_blocking=True)
-            
             # Mixed precision training
             if self.scaler:
                 with autocast():
@@ -689,37 +688,37 @@ class EchoPinTrainer:
             batch_losses.append(batch_loss)  # Record current batch loss
             
             # Debug output: print IoU details and A distribution for first 10 batches, especially focus on small objects
-            if self.epoch == 0 and batch_idx < 20:
-                with torch.no_grad():
-                    img_size_dbg = self.args.img_size
-                    # Convert center point + width/height to pixel xyxy (consistent with loss)
-                    cx = pred_bbox[:, 0]
-                    cy = pred_bbox[:, 1]
-                    w = pred_bbox[:, 2].clamp(min=0.05)
-                    h = pred_bbox[:, 3].clamp(min=0.05)
-                    half_w = 0.5 * w * img_size_dbg
-                    half_h = 0.5 * h * img_size_dbg
-                    cx_pix = cx * img_size_dbg
-                    cy_pix = cy * img_size_dbg
-                    xmin_dbg = torch.clamp(cx_pix - half_w, 0, img_size_dbg - 1)
-                    ymin_dbg = torch.clamp(cy_pix - half_h, 0, img_size_dbg - 1)
-                    xmax_dbg = torch.clamp(cx_pix + half_w, 0, img_size_dbg)
-                    ymax_dbg = torch.clamp(cy_pix + half_h, 0, img_size_dbg)
-                    pred_xyxy_dbg = torch.stack([xmin_dbg, ymin_dbg, xmax_dbg, ymax_dbg], dim=1)
-                    gt_xyxy_dbg = gt['bbox_xyxy_224'].to(pred_xyxy_dbg.device).float()
-                    iou_vals = self._bbox_iou(pred_xyxy_dbg, gt_xyxy_dbg)
+            # if self.epoch == 0 and batch_idx < 10:
+            #     with torch.no_grad():
+            #         img_size_dbg = self.args.img_size
+            #         # Convert center point + width/height to pixel xyxy (consistent with loss)
+            #         cx = pred_bbox[:, 0]
+            #         cy = pred_bbox[:, 1]
+            #         w = pred_bbox[:, 2].clamp(min=0.05)
+            #         h = pred_bbox[:, 3].clamp(min=0.05)
+            #         half_w = 0.5 * w * img_size_dbg
+            #         half_h = 0.5 * h * img_size_dbg
+            #         cx_pix = cx * img_size_dbg
+            #         cy_pix = cy * img_size_dbg
+            #         xmin_dbg = torch.clamp(cx_pix - half_w, 0, img_size_dbg - 1)
+            #         ymin_dbg = torch.clamp(cy_pix - half_h, 0, img_size_dbg - 1)
+            #         xmax_dbg = torch.clamp(cx_pix + half_w, 0, img_size_dbg)
+            #         ymax_dbg = torch.clamp(cy_pix + half_h, 0, img_size_dbg)
+            #         pred_xyxy_dbg = torch.stack([xmin_dbg, ymin_dbg, xmax_dbg, ymax_dbg], dim=1)
+            #         gt_xyxy_dbg = gt['bbox_xyxy_224'].to(pred_xyxy_dbg.device).float()
+            #         iou_vals = self._bbox_iou(pred_xyxy_dbg, gt_xyxy_dbg)
                     
-                    # Calculate GT area, identify small objects
-                    gt_areas = (gt_xyxy_dbg[:, 2] - gt_xyxy_dbg[:, 0]) * (gt_xyxy_dbg[:, 3] - gt_xyxy_dbg[:, 1])
-                    small_obj_mask = gt_areas < (img_size_dbg * img_size_dbg * 0.01)  # Objects with area less than 1% are small objects
-                    small_obj_iou = iou_vals[small_obj_mask].mean() if small_obj_mask.any() else torch.tensor(0.0)
+            #         # Calculate GT area, identify small objects
+            #         gt_areas = (gt_xyxy_dbg[:, 2] - gt_xyxy_dbg[:, 0]) * (gt_xyxy_dbg[:, 3] - gt_xyxy_dbg[:, 1])
+            #         small_obj_mask = gt_areas < (img_size_dbg * img_size_dbg * 0.01)  # Objects with area less than 1% are small objects
+            #         small_obj_iou = iou_vals[small_obj_mask].mean() if small_obj_mask.any() else torch.tensor(0.0)
                     
-                    a_mean = A.mean().item() if isinstance(A, torch.Tensor) else float('nan')
-                    a_std = A.std().item() if isinstance(A, torch.Tensor) else float('nan')
-                    print(f"[debug][e{self.epoch} b{batch_idx}] iou_mean={iou_vals.mean().item():.3f} "
-                          f"small_obj_iou={small_obj_iou.item():.3f} small_obj_count={small_obj_mask.sum().item()} "
-                          f"pred0={pred_xyxy_dbg[0].tolist()} gt0={gt_xyxy_dbg[0].tolist()} "
-                          f"A_mean={a_mean:.4f} A_std={a_std:.4f}")
+            #         a_mean = A.mean().item() if isinstance(A, torch.Tensor) else float('nan')
+            #         a_std = A.std().item() if isinstance(A, torch.Tensor) else float('nan')
+            #         print(f"[debug][e{self.epoch} b{batch_idx}] iou_mean={iou_vals.mean().item():.3f} "
+            #               f"small_obj_iou={small_obj_iou.item():.3f} small_obj_count={small_obj_mask.sum().item()} "
+            #               f"pred0={pred_xyxy_dbg[0].tolist()} gt0={gt_xyxy_dbg[0].tolist()} "
+            #               f"A_mean={a_mean:.4f} A_std={a_std:.4f}")
 
             # Update progress bar, show current loss and average loss
             avg_loss = total_loss / (batch_idx + 1)
@@ -835,13 +834,11 @@ class EchoPinTrainer:
             inbatch_neg_scores = torch.zeros_like(pos_scores)
         img_neg_scores = logits_img_neg[:, 0]
         aud_neg_scores = logits_aud_neg[:, 0]
-
         margin = 0.2
         loss_img_neg = F.relu(margin + img_neg_scores - pos_scores).mean()
         loss_inbatch = F.relu(margin + inbatch_neg_scores - pos_scores).mean()
         loss_img = loss_img_neg + loss_inbatch
         loss_aud = F.relu(margin + aud_neg_scores - pos_scores).mean()
-
         # IoU loss (interpret prediction as center point + width/height to avoid degenerating to zero area)
         img_size = self.args.img_size
         # Prediction is [cx, cy, w, h], range (0,1)
