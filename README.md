@@ -6,6 +6,7 @@
 [![Project](http://img.shields.io/badge/Project-SSHS-4D96FF.svg)](https://github.com/CuriseJia/SSHS/)
 [![Paper](http://img.shields.io/badge/Paper-arxiv.2505.11217-FF6B6B.svg)](https://arxiv.org/abs/2505.11217)
 [![Poster](http://img.shields.io/badge/Poster-4682B4.svg)](https://drive.google.com/file/d/1UmSUidDINODephUB796dpHg3vJlPioy7/view?usp=sharing)
+[![Presentation](http://img.shields.io/badge/Presentation-3c9d5a.svg)](https://www.youtube.com/watch?v=dIvi5DZ12x4)
 </div>
 
 The implementation of NeurIPS 2025 Spotlight (Top 3%) paper [Seeing Sound, Hearing Sight: Uncovering Modality Bias and Conflict of AI models in Sound Localization](https://arxiv.org/abs/2505.11217).
