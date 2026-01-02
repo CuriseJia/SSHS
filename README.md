@@ -1,6 +1,6 @@
 <div align="center">
   
-# 【NeurIPS'2025 Spotlight🔥】Seeing Sound, Hearing Sight: Uncovering Modality Bias and Conflict of AI models in Sound Localization
+# 【NeurIPS2025 Spotlight🔥】Seeing Sound, Hearing Sight: Uncovering Modality Bias and Conflict of AI models in Sound Localization
   
 [![Conference](https://img.shields.io/badge/NeurIPS-2025(Spotlight)-FFD93D.svg)](https://neurips.cc/Conferences/2025)
 [![Project](http://img.shields.io/badge/Project-SSHS-4D96FF.svg)](https://github.com/CuriseJia/SSHS/)
