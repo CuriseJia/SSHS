@@ -121,12 +121,14 @@ Our code is based on [IS3](https://github.com/kaistmm/SSLalignment), [DepthAnyth
 
 
 ## 📌 Citation
-If you find this paper useful, please consider staring 🌟 this repo and citing 📑 our paper:
+If you find this paper useful, please consider starring 🌟 this repo and citing 📑 our paper:
 ```
-@article{jia2025seeing,
+@article{jia2026seeing,
   title={Seeing sound, hearing sight: Uncovering modality bias and conflict of ai models in sound localization},
-  author={Jia, Yanhao and Xie, Ji and Jivaganesh, S and Li, Hao and Wu, Xu and Zhang, Mengmi},
-  journal={arXiv preprint arXiv:2505.11217},
-  year={2025}
+  author={Jia, Yanhao and Xie, Ji and Jivaganesh, S and Hao, Li and Wu, Xu and Zhang, Mengmi},
+  journal={Advances in Neural Information Processing Systems},
+  volume={38},
+  pages={148468--148499},
+  year={2026}
 }
 ```
